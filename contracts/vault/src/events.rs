@@ -65,6 +65,14 @@ pub enum RecurraEvent {
         refund: U128,
         external_ref: String,
     },
+    /// An in-flight charge whose callback never arrived within
+    /// `STALE_CHARGE_BLOCKS` was cleared and treated as paid.
+    #[event_version("1.0.0")]
+    StaleChargeCleared {
+        sub_id: u64,
+        charge_number: u32,
+        amount: U128,
+    },
     #[event_version("1.0.0")]
     RefundFailed {
         sub_id: u64,

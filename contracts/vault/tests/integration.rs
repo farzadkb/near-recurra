@@ -497,3 +497,62 @@ async fn merchant_cancel_refunds_owner() -> TestResult {
     e.assert_inv1(&e.usdc).await?;
     Ok(())
 }
+
+/// Gas burnt by the vault's callback receipts of a transaction (all vault
+/// receipts after the first one, which is the called method itself).
+fn callback_gas(r: &near_api::types::transaction::result::ExecutionSuccess, vault: &AccountId) -> Vec<u64> {
+    r.receipt_outcomes()
+        .iter()
+        .filter(|o| &o.executor_id == vault)
+        .skip(1)
+        .map(|o| o.gas_burnt.as_gas())
+        .collect()
+}
+
+/// The callback reservation (fixed 10 TGas) is far above what callbacks burn on
+/// every path, and a charge without enough gas is refused before any state change.
+#[tokio::test]
+async fn gas_reservation_and_low_gas_refusal() -> TestResult {
+    const RESERVED: u64 = 10 * 1_000_000_000_000; // GAS_FOR_RESOLVE
+    let e = Env::new().await?;
+    let (alice, bob, merchant) = (e.alice.clone(), e.bob.clone(), e.merchant.clone());
+    let vault = e.vault.0.clone();
+    let plan = e.create_plan(&merchant, &e.usdc, USDC).await?;
+
+    // Success path via subscribe(charge_now) inside a 100 TGas ft_transfer_call.
+    let r = e.ft_transfer_call(&alice, &e.usdc, 5 * USDC, subscribe_msg(plan, "g:1", true)).await?.assert_success();
+    let mut burnt = callback_gas(&r, &vault);
+    assert!(has_event(&r.logs(), "charged"));
+
+    // Low gas: refused, state untouched.
+    e.advance_past_next_charge(1).await?;
+    let before = e.sub(1).await?;
+    let fail = e.call(&bob, &e.vault, "charge", json!({ "sub_id": 1 }), NearToken::from_yoctonear(0), 25).await?.assert_failure();
+    assert!(format!("{fail:?}").contains("insufficient gas"), "{fail:?}");
+    assert_eq!(e.sub(1).await?, before);
+
+    // 50 TGas (the charger's setting) works.
+    let r = e.charge(&bob, 1).await?.assert_success();
+    burnt.extend(callback_gas(&r, &vault));
+
+    // Failure path (unregistered merchant) — the callback that does the most writes.
+    let m2 = e.create_account("merchant2").await?;
+    let plan2 = e.create_plan(&m2, &e.usdc, USDC).await?;
+    e.ft_transfer_call(&alice, &e.usdc, 2 * USDC, subscribe_msg(plan2, "g:2", false)).await?.assert_success();
+    e.advance_past_next_charge(2).await?;
+    let r = e.charge(&bob, 2).await?.assert_success();
+    assert!(has_event(&r.logs(), "charge_failed"));
+    burnt.extend(callback_gas(&r, &vault));
+
+    // Refund callback (success path).
+    let r = e.call(&alice, &e.vault, "cancel", json!({ "sub_id": 1 }), ONE_YOCTO, 50).await?.assert_success();
+    burnt.extend(callback_gas(&r, &vault));
+
+    println!("callback gas burnt (TGas): {:?}", burnt.iter().map(|g| *g as f64 / 1e12).collect::<Vec<_>>());
+    assert!(burnt.len() >= 4, "expected 4 callbacks, got {burnt:?}");
+    for g in burnt {
+        assert!(g * 2 < RESERVED, "callback burnt {g} gas: less than 2x margin to the reservation");
+    }
+    e.assert_inv1(&e.usdc).await?;
+    Ok(())
+}

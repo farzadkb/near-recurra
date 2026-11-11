@@ -84,9 +84,11 @@ fn subscribe(c: &mut Contract, plan: u32, deposit: u128, charge_now: bool) -> u6
     id
 }
 
-fn resolve_charge(c: &mut Contract, sub_id: u64, prev_next: u64, ts: u64, ok: bool) -> bool {
+/// Resolves the sub's current in-flight charge.
+fn resolve_charge(c: &mut Contract, sub_id: u64, ts: u64, ok: bool) -> bool {
+    let n = c.get_subscription(sub_id).unwrap().in_flight.expect("no charge in flight").charge_number;
     set_callback(ts, ok);
-    c.on_charge_resolved(sub_id, U128(AMOUNT), U64(prev_next))
+    c.on_charge_resolved(sub_id, n, U128(AMOUNT))
 }
 
 fn sum_balances(c: &Contract, token: &AccountId) -> u128 {
@@ -239,7 +241,7 @@ fn subscribe_charge_now_charges_first_period_to_merchant() {
     assert_eq!(s.merchant, merchant());
     assert_eq!(s.balance, U128(2 * AMOUNT));
     assert_eq!(s.charges_count, 1);
-    assert!(s.charging);
+    assert_eq!(s.in_flight.as_ref().unwrap().charge_number, 1);
     assert_eq!(s.next_charge_at_ns, U64(T0 + PERIOD_NS));
     assert_eq!(c.get_total_held(usdc()), U128(2 * AMOUNT));
 
@@ -252,8 +254,8 @@ fn subscribe_charge_now_charges_first_period_to_merchant() {
     assert!(ft[0].2.contains(&format!(r#""amount":"{AMOUNT}""#)));
     assert!(calls.iter().any(|(r, m, _)| r == "vault.near" && m == "on_charge_resolved"));
 
-    assert!(resolve_charge(&mut c, id, T0, T0, true));
-    assert!(!c.get_subscription(id).unwrap().charging);
+    assert!(resolve_charge(&mut c, id, T0, true));
+    assert!(c.get_subscription(id).unwrap().in_flight.is_none());
     assert!(get_logs().iter().any(|l| l.contains(r#""event":"charged""#)));
 }
 
@@ -339,7 +341,7 @@ fn inv5_wrong_token_is_returned() {
 fn inv4_at_most_one_charge_per_period() {
     let (mut c, plan) = setup();
     let id = subscribe(&mut c, plan, 10 * AMOUNT, true);
-    resolve_charge(&mut c, id, T0, T0, true);
+    resolve_charge(&mut c, id, T0, true);
 
     // Same block, mid-period and one ns before the boundary: all refused.
     for ts in [T0, T0 + PERIOD_NS / 2, T0 + PERIOD_NS - 1] {
@@ -358,7 +360,7 @@ fn inv4_at_most_one_charge_per_period() {
 fn early_charge_panics() {
     let (mut c, plan) = setup();
     let id = subscribe(&mut c, plan, 10 * AMOUNT, true);
-    resolve_charge(&mut c, id, T0, T0, true);
+    resolve_charge(&mut c, id, T0, true);
     set(&acc("anyone.near"), NearToken::from_yoctonear(0), T0 + PERIOD_NS - 1);
     let _ = c.charge(id);
 }
@@ -379,12 +381,12 @@ fn concurrent_charge_is_refused() {
 fn next_charge_anchored_to_now_after_downtime() {
     let (mut c, plan) = setup();
     let id = subscribe(&mut c, plan, 10 * AMOUNT, true);
-    resolve_charge(&mut c, id, T0, T0, true);
+    resolve_charge(&mut c, id, T0, true);
     // Charger offline for 5 periods: only one charge, next one a full period later.
     let late = T0 + 5 * PERIOD_NS + 7;
     set(&acc("anyone.near"), NearToken::from_yoctonear(0), late);
     let _ = c.charge(id);
-    resolve_charge(&mut c, id, T0 + PERIOD_NS, late, true);
+    resolve_charge(&mut c, id, late, true);
     let s = c.get_subscription(id).unwrap();
     assert_eq!(s.charges_count, 2);
     assert_eq!(s.next_charge_at_ns, U64(late + PERIOD_NS));
@@ -397,7 +399,7 @@ fn max_charges_enforced() {
     let (mut c, plan) = setup();
     let m = format!(r#"{{"subscribe":{{"plan_id":{plan},"external_ref":"m","charge_now":true,"max_charges":1}}}}"#);
     assert_eq!(transfer(&mut c, &usdc(), &alice(), 5 * AMOUNT, &m, T0), 0);
-    resolve_charge(&mut c, 1, T0, T0, true);
+    resolve_charge(&mut c, 1, T0, true);
     set(&acc("anyone.near"), NearToken::from_yoctonear(0), T0 + PERIOD_NS);
     assert!(c.get_due(None, None).is_empty());
     let _ = c.charge(1);
@@ -409,7 +411,7 @@ fn max_charges_enforced() {
 fn past_due_then_top_up_reactivates() {
     let (mut c, plan) = setup();
     let id = subscribe(&mut c, plan, AMOUNT, true); // exactly one period
-    resolve_charge(&mut c, id, T0, T0, true);
+    resolve_charge(&mut c, id, T0, true);
     let t1 = T0 + PERIOD_NS;
     set(&acc("anyone.near"), NearToken::from_yoctonear(0), t1);
     assert_eq!(c.get_due(None, None), vec![id], "active sub with empty balance is due (to mark PastDue)");
@@ -430,7 +432,7 @@ fn past_due_then_top_up_reactivates() {
 
     set(&acc("anyone.near"), NearToken::from_yoctonear(0), t1);
     assert!(matches!(c.charge(id), PromiseOrValue::Promise(_)));
-    resolve_charge(&mut c, id, t1, t1, true);
+    resolve_charge(&mut c, id, t1, true);
     let s = c.get_subscription(id).unwrap();
     assert_eq!((s.charges_count, s.balance), (2, U128(0)));
 }
@@ -447,7 +449,7 @@ fn inv6_failed_charge_restores_accounting() {
     let _ = c.charge(id);
     assert_eq!(c.get_total_held(usdc()), U128(2 * AMOUNT));
 
-    assert!(!resolve_charge(&mut c, id, before.next_charge_at_ns.0, t, false));
+    assert!(!resolve_charge(&mut c, id, t, false));
     let after = c.get_subscription(id).unwrap();
     assert_eq!(after, before, "state must equal pre-charge state");
     assert_eq!(c.get_total_held(usdc()), U128(3 * AMOUNT));
@@ -489,7 +491,7 @@ fn charge_failing_after_cancel_is_withdrawable() {
     let _ = c.cancel(id); // refunds 2 * AMOUNT
     set_callback(T0, true);
     c.on_refund_resolved(id, U128(2 * AMOUNT));
-    resolve_charge(&mut c, id, T0, T0, false); // charge #1 fails afterwards
+    resolve_charge(&mut c, id, T0, false); // charge #1 fails afterwards
     let s = c.get_subscription(id).unwrap();
     assert_eq!((s.status, s.balance), (SubStatus::Cancelled, U128(AMOUNT)));
     set(&alice(), NearToken::from_yoctonear(1), T0);
@@ -607,7 +609,7 @@ fn set_plan_active_by_stranger_fails() {
 fn inv2_subscription_terms_never_change() {
     let (mut c, plan) = setup();
     let id = subscribe(&mut c, plan, 10 * AMOUNT, true);
-    resolve_charge(&mut c, id, T0, T0, true);
+    resolve_charge(&mut c, id, T0, true);
     let terms = |s: &Subscription| (s.amount, s.period_ns, s.merchant.clone(), s.token.clone());
     let t0 = terms(&c.get_subscription(id).unwrap());
 
@@ -621,7 +623,7 @@ fn inv2_subscription_terms_never_change() {
     let ft: Vec<_> = calls().into_iter().filter(|(_, m, _)| m == "ft_transfer").collect();
     assert!(ft[0].2.contains(&format!(r#""amount":"{AMOUNT}""#)), "old price charged");
     assert!(ft[0].2.contains(r#""receiver_id":"merchant.near""#));
-    resolve_charge(&mut c, id, T0 + PERIOD_NS, t, true);
+    resolve_charge(&mut c, id, t, true);
     // Top-up doesn't change terms either.
     let top = format!(r#"{{"top_up":{{"sub_id":{id}}}}}"#);
     transfer(&mut c, &usdc(), &alice(), AMOUNT, &top, t);
@@ -640,17 +642,17 @@ fn inv1_total_held_equals_sum_of_balances_through_lifecycle() {
     check(&c);
     let b = subscribe(&mut c, plan, 2 * AMOUNT, false);
     check(&c);
-    resolve_charge(&mut c, a, T0, T0, true);
+    resolve_charge(&mut c, a, T0, true);
     check(&c);
     let t = T0 + PERIOD_NS;
     set(&acc("anyone.near"), NearToken::from_yoctonear(0), t);
     let _ = c.charge(a);
     check(&c);
-    resolve_charge(&mut c, a, T0 + PERIOD_NS, t, false);
+    resolve_charge(&mut c, a, t, false);
     check(&c);
     set(&acc("anyone.near"), NearToken::from_yoctonear(0), t);
     let _ = c.charge(b);
-    resolve_charge(&mut c, b, T0 + PERIOD_NS, t, true);
+    resolve_charge(&mut c, b, t, true);
     check(&c);
     set(&alice(), NearToken::from_yoctonear(1), t);
     let _ = c.cancel(a);
@@ -691,4 +693,218 @@ fn event_format_is_nep297() {
     assert_eq!(v["event"], "subscribed");
     assert_eq!(v["data"]["external_ref"], "wc:x:1");
     assert_eq!(v["data"]["owner"], "alice.near");
+}
+
+// ---------------------------------------------------------------- gas reservation
+
+fn set_full(pred: &AccountId, deposit: NearToken, ts: u64, height: u64, tgas: u64) {
+    testing_env!(ctx(pred, deposit, ts).block_height(height).prepaid_gas(near_sdk::Gas::from_tgas(tgas)).build());
+}
+
+#[test]
+fn charge_with_insufficient_gas_is_refused_before_state_change() {
+    let (mut c, plan) = setup();
+    let id = subscribe(&mut c, plan, 3 * AMOUNT, false);
+    let before = c.get_subscription(id).unwrap();
+    let t = T0 + PERIOD_NS;
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), t, 10, MIN_GAS_FOR_TRANSFER.as_tgas() - 1);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = c.charge(id);
+    }));
+    let msg = *r.unwrap_err().downcast::<String>().unwrap();
+    assert!(msg.contains("insufficient gas"), "{msg}");
+    assert_eq!(c.get_subscription(id).unwrap(), before);
+    assert_eq!(c.get_total_held(usdc()), U128(3 * AMOUNT));
+    // The documented 50 TGas works.
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), t, 10, 50);
+    assert!(matches!(c.charge(id), PromiseOrValue::Promise(_)));
+}
+
+#[test]
+fn callback_gets_fixed_gas_reservation() {
+    let (mut c, plan) = setup();
+    let id = subscribe(&mut c, plan, 3 * AMOUNT, false);
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), T0 + PERIOD_NS, 10, 300);
+    let _ = c.charge(id);
+    let mut seen = false;
+    for r in get_created_receipts() {
+        for a in r.actions {
+            if let MockAction::FunctionCallWeight { method_name, prepaid_gas, gas_weight, .. } = a {
+                if method_name == b"on_charge_resolved" {
+                    assert_eq!(prepaid_gas, GAS_FOR_RESOLVE, "callback gas must be the fixed reservation");
+                    assert_eq!(gas_weight.0, 0, "callback must not share unused gas");
+                    seen = true;
+                }
+                if method_name == b"ft_transfer" {
+                    assert!(prepaid_gas >= GAS_FOR_FT_TRANSFER);
+                }
+            }
+        }
+    }
+    assert!(seen);
+    set_full(&alice(), NearToken::from_yoctonear(1), T0 + PERIOD_NS, 11, 300);
+    let _ = c.cancel(id);
+    let refund_cb = get_created_receipts().into_iter().flat_map(|r| r.actions).any(|a| {
+        matches!(a, MockAction::FunctionCallWeight { ref method_name, prepaid_gas, gas_weight, .. }
+            if method_name == b"on_refund_resolved" && prepaid_gas == GAS_FOR_RESOLVE && gas_weight.0 == 0)
+    });
+    assert!(refund_cb);
+}
+
+#[test]
+fn subscribe_charge_now_with_insufficient_gas_returns_tokens() {
+    let (mut c, plan) = setup();
+    set_full(&usdc(), NearToken::from_yoctonear(0), T0, 10, MIN_GAS_FOR_TRANSFER.as_tgas() + 5);
+    let usage = env::storage_usage();
+    let r = c.ft_on_transfer(alice(), U128(2 * AMOUNT), sub_msg(plan, "lowgas", true));
+    assert!(matches!(r, PromiseOrValue::Value(U128(v)) if v == 2 * AMOUNT));
+    assert_eq!(c.get_num_subscriptions(), 0);
+    assert_eq!(env::storage_usage(), usage);
+    assert!(calls().is_empty());
+    // charge_now: false does not need the transfer gas.
+    let r = c.ft_on_transfer(alice(), U128(2 * AMOUNT), sub_msg(plan, "lowgas", false));
+    assert!(matches!(r, PromiseOrValue::Value(U128(0))));
+}
+
+#[test]
+#[should_panic(expected = "insufficient gas")]
+fn cancel_with_insufficient_gas_is_refused() {
+    let (mut c, plan) = setup();
+    let id = subscribe(&mut c, plan, AMOUNT, false);
+    set_full(&alice(), NearToken::from_yoctonear(1), T0, 10, 20);
+    let _ = c.cancel(id);
+}
+
+// ---------------------------------------------------------------- cancel during in-flight charge
+
+#[test]
+fn cancel_during_in_flight_charge_excludes_in_flight_amount_success() {
+    let (mut c, plan) = setup();
+    let id = subscribe(&mut c, plan, 3 * AMOUNT, true); // charge #1 in flight
+    set(&alice(), NearToken::from_yoctonear(1), T0);
+    let _ = c.cancel(id);
+    let ft: Vec<_> = calls().into_iter().filter(|(_, m, _)| m == "ft_transfer").collect();
+    assert_eq!(ft.len(), 1);
+    assert!(ft[0].2.contains(r#""receiver_id":"alice.near""#));
+    assert!(ft[0].2.contains(&format!(r#""amount":"{}""#, 2 * AMOUNT)), "refund excludes in-flight: {}", ft[0].2);
+    let s = c.get_subscription(id).unwrap();
+    assert_eq!(s.status, SubStatus::Cancelled);
+    assert!(s.in_flight.is_some(), "live in-flight record kept");
+    set_callback(T0, true);
+    c.on_refund_resolved(id, U128(2 * AMOUNT));
+    // Charge #1 succeeds after cancel: merchant keeps the period that was due.
+    assert!(resolve_charge(&mut c, id, T0, true));
+    let s = c.get_subscription(id).unwrap();
+    assert_eq!((s.balance, s.charges_count, s.in_flight), (U128(0), 1, None));
+    assert_eq!(c.get_total_held(usdc()), U128(0));
+}
+
+#[test]
+fn cancel_during_in_flight_charge_failure_is_withdrawable() {
+    let (mut c, plan) = setup();
+    let id = subscribe(&mut c, plan, 3 * AMOUNT, true);
+    set(&merchant(), NearToken::from_yoctonear(1), T0);
+    let _ = c.merchant_cancel(id);
+    set_callback(T0, true);
+    c.on_refund_resolved(id, U128(2 * AMOUNT));
+    assert!(!resolve_charge(&mut c, id, T0, false));
+    let s = c.get_subscription(id).unwrap();
+    assert_eq!((s.status, s.balance, s.charges_count), (SubStatus::Cancelled, U128(AMOUNT), 0));
+    assert_eq!(c.get_total_held(usdc()), U128(AMOUNT));
+    set(&alice(), NearToken::from_yoctonear(1), T0);
+    let _ = c.withdraw_unclaimed(id);
+    let ft: Vec<_> = calls().into_iter().filter(|(_, m, _)| m == "ft_transfer").collect();
+    assert!(ft[0].2.contains(r#""receiver_id":"alice.near""#) && ft[0].2.contains(&format!(r#""amount":"{AMOUNT}""#)));
+}
+
+// ---------------------------------------------------------------- stale in-flight recovery
+
+/// Starts charge #2 at block `h0` and "loses" its callback. Returns sub id.
+fn sub_with_lost_callback(c: &mut Contract, plan: u32, h0: u64) -> u64 {
+    let id = subscribe(c, plan, 5 * AMOUNT, true);
+    resolve_charge(c, id, T0, true); // #1 ok
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), T0 + PERIOD_NS, h0, 300);
+    let _ = c.charge(id); // #2 in flight, callback never arrives
+    id
+}
+
+#[test]
+fn stale_flag_blocks_until_threshold_then_clears_without_recredit() {
+    let (mut c, plan) = setup();
+    let h0 = 1_000;
+    let id = sub_with_lost_callback(&mut c, plan, h0);
+    let t2 = T0 + 2 * PERIOD_NS; // charge #3 is due by time
+
+    // One block before the threshold: still blocked, not in get_due.
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), t2, h0 + STALE_CHARGE_BLOCKS - 1, 300);
+    assert!(c.get_due(None, None).is_empty());
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = c.charge(id);
+    }));
+    assert!(r.unwrap_err().downcast::<String>().unwrap().contains("charge already in flight"));
+
+    // At the threshold: due again; charge clears the stale record, treats #2 as paid, starts #3.
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), t2, h0 + STALE_CHARGE_BLOCKS, 300);
+    assert_eq!(c.get_due(None, None), vec![id]);
+    let _ = c.charge(id);
+    assert!(get_logs().iter().any(|l| l.contains(r#""event":"stale_charge_cleared""#) && l.contains(r#""charge_number":2"#)));
+    let s = c.get_subscription(id).unwrap();
+    // 5 deposited - #1 - #2 (assumed paid, NOT re-credited) - #3 = 2.
+    assert_eq!((s.balance, s.charges_count), (U128(2 * AMOUNT), 3));
+    assert_eq!(s.in_flight.as_ref().unwrap().charge_number, 3);
+    assert_eq!(c.get_total_held(usdc()).0, sum_balances(&c, &usdc()));
+}
+
+#[test]
+fn late_success_callback_after_stale_clear_changes_nothing() {
+    let (mut c, plan) = setup();
+    let id = sub_with_lost_callback(&mut c, plan, 1_000);
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), T0 + 2 * PERIOD_NS, 1_100, 300);
+    let _ = c.charge(id); // clears #2, starts #3
+    let before = c.get_subscription(id).unwrap();
+    set_callback(T0 + 2 * PERIOD_NS, true);
+    assert!(c.on_charge_resolved(id, 2, U128(AMOUNT))); // late #2 success
+    assert_eq!(c.get_subscription(id).unwrap(), before, "late success must not touch #3's in-flight record");
+}
+
+#[test]
+fn late_failure_callback_after_stale_clear_recredits_once() {
+    let (mut c, plan) = setup();
+    let id = sub_with_lost_callback(&mut c, plan, 1_000);
+    let t = T0 + 2 * PERIOD_NS;
+    set_full(&acc("anyone.near"), NearToken::from_yoctonear(0), t, 1_100, 300);
+    let _ = c.charge(id); // clears #2, starts #3
+    let next = c.get_subscription(id).unwrap().next_charge_at_ns;
+    set_callback(t, false);
+    assert!(!c.on_charge_resolved(id, 2, U128(AMOUNT))); // late #2 failure: tokens never left
+    let s = c.get_subscription(id).unwrap();
+    assert_eq!((s.balance, s.charges_count), (U128(3 * AMOUNT), 2));
+    assert_eq!(s.next_charge_at_ns, next, "schedule of the newer charge kept");
+    assert_eq!(s.in_flight.as_ref().unwrap().charge_number, 3, "#3 still tracked");
+    assert_eq!(c.get_total_held(usdc()).0, sum_balances(&c, &usdc()));
+    // #3 resolves normally afterwards.
+    assert!(resolve_charge(&mut c, id, t, true));
+    assert!(c.get_subscription(id).unwrap().in_flight.is_none());
+}
+
+#[test]
+fn cancel_clears_stale_flag_and_refunds_balance_only() {
+    let (mut c, plan) = setup();
+    let id = sub_with_lost_callback(&mut c, plan, 1_000);
+    set_full(&alice(), NearToken::from_yoctonear(1), T0 + PERIOD_NS, 1_100, 300);
+    let _ = c.cancel(id);
+    assert!(get_logs().iter().any(|l| l.contains(r#""event":"stale_charge_cleared""#)));
+    let ft: Vec<_> = calls().into_iter().filter(|(_, m, _)| m == "ft_transfer").collect();
+    assert!(ft[0].2.contains(&format!(r#""amount":"{}""#, 3 * AMOUNT)), "5 - #1 - #2 = 3: {}", ft[0].2);
+    let s = c.get_subscription(id).unwrap();
+    assert_eq!((s.status, s.in_flight), (SubStatus::Cancelled, None));
+}
+
+#[test]
+fn cancel_does_not_clear_live_in_flight_charge() {
+    let (mut c, plan) = setup();
+    let id = sub_with_lost_callback(&mut c, plan, 1_000);
+    set_full(&alice(), NearToken::from_yoctonear(1), T0 + PERIOD_NS, 1_050, 300);
+    let _ = c.cancel(id);
+    assert!(c.get_subscription(id).unwrap().in_flight.is_some());
 }

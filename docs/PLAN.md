@@ -233,14 +233,17 @@ Rules:
 
 - `MIN_PERIOD_SEC = 60`; `name` ≤ 64 chars; `external_ref` 1–96 chars; `max_charges: 0` rejected.
 - `charge_now` defaults to `true`. `charge_now: false` = first charge one period after subscribing (trial-style); deposit may then be any amount > 0.
-- `Subscription.charging: bool` — set while a charge transfer awaits its callback; `charge` panics while set. Prevents a second charge before `on_charge_resolved` restores state (keeps invariants 4 and 6 independent of period length).
+- `Subscription.in_flight: Option<InFlightCharge{charge_number, amount, started_at_block, prev_next_charge_at_ns}>` — set while a charge transfer awaits its callback; a second `charge` panics while set (keeps invariants 4 and 6 independent of period length).
+- Gas: callbacks get a fixed `GAS_FOR_RESOLVE = 10 TGas` with `unused_gas_weight = 0` (measured burn ≤ 1.9 TGas). `charge`, `cancel`, `merchant_cancel`, `withdraw_unclaimed` require ≥ 30 TGas remaining (`MIN_GAS_FOR_TRANSFER`) **before any state change**; `subscribe` with `charge_now` returns the tokens if it lacks gas. Callers should attach 50 TGas.
+- Stale in-flight charge: a NEAR callback always executes and `on_charge_resolved` has no panic path, so a stuck record needs an out-of-gas callback. Backstop: after `STALE_CHARGE_BLOCKS = 100` blocks, `charge` (when otherwise allowed) or `cancel` clears it, emits `stale_charge_cleared`, and **treats the charge as paid** — the amount is never re-credited on clearing, so a transfer that did reach the merchant cannot be paid twice. Callbacks carry `charge_number`; a late callback for a cleared charge leaves the newer in-flight record alone: late success = no-op, late failure = re-credit `amount` (tokens provably never left) and decrement `charges_count`, without touching the newer schedule.
+- `cancel` while a charge is in flight: refund = current `balance`, which already excludes the in-flight amount. A live in-flight record is kept; if that charge then fails, the callback re-credits the cancelled sub and the owner calls `withdraw_unclaimed`.
 - `total_held: LookupMap<token, U128>` — sum of balances per token, excluding in-flight amounts; view `get_total_held(token)`. Accounting is per token, so a plan using a fake token can never touch USDC accounting.
 - Extra views: `get_owner`, `get_total_held(token)`, `get_num_subscriptions`. `get_plans` returns `[plan_id, plan]` pairs. Times are `U64` strings (ns) in JSON.
 - `get_due` skips `PastDue` subs whose balance is still below `amount` (no pointless charger calls) and subs with a charge in flight.
 - `charge`/`cancel`/`merchant_cancel`/`withdraw_unclaimed` return the callback's `bool` (true = transfer succeeded). `charge` on insufficient balance returns `false` without panicking.
 - Storage: plan and subscription storage is measured with `env::storage_usage()` (collections flushed first); a subscription the pool cannot pay for is rolled back and the tokens returned. Storage is not released on cancel (history kept).
 - Events: NEP-297 via `#[near(event_json)]`; `data` is a single object. Extra fields: `subscribed.deposit`, `cancelled.cancelled_by`/`refund`, `topped_up.balance`.
-- Gas: `ft_transfer` 10 TGas, callbacks 10 TGas. Subscribe with `charge_now` fits in the 100 TGas `ft_transfer_call`; `charge` fits in 50 TGas.
+- Gas: `ft_transfer` ≥ 10 TGas (+ unused gas), callbacks fixed 10 TGas. Subscribe with `charge_now` fits in the 100 TGas `ft_transfer_call`; `charge` fits in 50 TGas.
 - Optimized wasm: vault 226 KB (~2.3 NEAR storage stake), mock-ft 155 KB.
 
 ### Deploy

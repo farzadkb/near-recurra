@@ -24,8 +24,26 @@ pub const MAX_NAME_LEN: usize = 64;
 pub const MAX_REF_LEN: usize = 96;
 pub const MAX_PAGE: u32 = 100;
 const NS_PER_SEC: u64 = 1_000_000_000;
-const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
-const GAS_FOR_RESOLVE: Gas = Gas::from_tgas(10);
+/// Minimum gas for the outgoing `ft_transfer` (it also receives any unused gas).
+pub const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
+/// Fixed gas for `on_charge_resolved` / `on_refund_resolved`. Attached with
+/// `unused_gas_weight = 0`, so it is exactly this amount — never less. The
+/// callbacks burn <= 1.9 TGas on every path (measured by
+/// `gas_reservation_and_low_gas_refusal` in tests/integration.rs): >5x margin.
+pub const GAS_FOR_RESOLVE: Gas = Gas::from_tgas(10);
+/// Gas the calling method still needs for itself after the gas check (state
+/// writes, event logs, creating the two receipts incl. their send fees).
+const GAS_FOR_SELF: Gas = Gas::from_tgas(10);
+/// Remaining gas required before any method moves tokens. Checked before any
+/// state change, so a low-gas call is refused cleanly instead of running out
+/// of gas half-way.
+pub const MIN_GAS_FOR_TRANSFER: Gas =
+    Gas::from_gas(GAS_FOR_FT_TRANSFER.as_gas() + GAS_FOR_RESOLVE.as_gas() + GAS_FOR_SELF.as_gas());
+/// Extra gas a `subscribe` with `charge_now` needs on top of the charge itself.
+const GAS_FOR_SUBSCRIBE: Gas = Gas::from_tgas(10);
+/// After this many blocks without its callback, an in-flight charge is
+/// considered stale and can be cleared (see `InFlightCharge`).
+pub const STALE_CHARGE_BLOCKS: u64 = 100;
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 
 #[ext_contract(ext_ft)]
@@ -90,9 +108,30 @@ pub struct Subscription {
     pub status: SubStatus,
     pub external_ref: String,
     pub created_at_ns: U64,
-    /// True while an outgoing charge transfer awaits its callback. Blocks a
+    /// Set while an outgoing charge transfer awaits its callback. Blocks a
     /// second concurrent charge of the same subscription.
-    pub charging: bool,
+    pub in_flight: Option<InFlightCharge>,
+}
+
+/// A charge whose `ft_transfer` was sent but whose callback has not run yet.
+///
+/// Accounting already reflects the charge (effects first): `balance` is
+/// reduced, `charges_count` and `next_charge_at_ns` are advanced.
+///
+/// On NEAR a callback receipt always executes; it can only fail by running out
+/// of its (fixed, reserved) gas or by panicking, and `on_charge_resolved` has no
+/// panic path. If it still never lands within `STALE_CHARGE_BLOCKS`, the next
+/// `charge` or `cancel` clears the record and **treats the charge as
+/// successful**: nothing is re-credited, so a transfer that did reach the
+/// merchant can never be paid twice. A callback arriving later is matched by
+/// `charge_number`; a late *failure* then re-credits the amount.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InFlightCharge {
+    pub charge_number: u32,
+    pub amount: U128,
+    pub started_at_block: U64,
+    pub prev_next_charge_at_ns: U64,
 }
 
 /// `msg` of `ft_transfer_call` with this vault as receiver.
@@ -259,11 +298,16 @@ impl Contract {
         self.internal_charge(sub_id)
     }
 
+    /// Resolves charge `charge_number`. Must never panic (a panicking callback
+    /// would leave `in_flight` set); subscriptions are never deleted.
     #[private]
-    pub fn on_charge_resolved(&mut self, sub_id: u64, amount: U128, prev_next_charge_at_ns: U64) -> bool {
+    pub fn on_charge_resolved(&mut self, sub_id: u64, charge_number: u32, amount: U128) -> bool {
         let ok = promise_succeeded();
-        let sub = self.subs.get_mut(&sub_id).unwrap_or_else(|| env::panic_str("sub not found"));
-        sub.charging = false;
+        let Some(sub) = self.subs.get_mut(&sub_id) else {
+            return ok;
+        };
+        let current = matches!(&sub.in_flight, Some(f) if f.charge_number == charge_number);
+        let prev_next = if current { sub.in_flight.take().map(|f| f.prev_next_charge_at_ns) } else { None };
         if ok {
             RecurraEvent::Charged {
                 sub_id,
@@ -271,16 +315,20 @@ impl Contract {
                 merchant: sub.merchant.clone(),
                 owner: sub.owner.clone(),
                 amount,
-                charge_number: sub.charges_count,
+                charge_number,
                 external_ref: sub.external_ref.clone(),
             }
             .emit();
             return true;
         }
-        // Restore accounting exactly as before the charge.
+        // Transfer failed: the tokens are still in the vault. Re-credit them.
         sub.balance = U128(sub.balance.0 + amount.0);
-        sub.charges_count -= 1;
-        sub.next_charge_at_ns = prev_next_charge_at_ns;
+        sub.charges_count = sub.charges_count.saturating_sub(1);
+        // Roll back the schedule only for the current charge; after a stale
+        // clear a later charge may already have advanced it.
+        if let Some(prev) = prev_next {
+            sub.next_charge_at_ns = prev;
+        }
         let (token, merchant) = (sub.token.clone(), sub.merchant.clone());
         self.add_held(&token, amount.0);
         RecurraEvent::ChargeFailed { sub_id, merchant, amount }.emit();
@@ -290,6 +338,12 @@ impl Contract {
     // ------------------------------------------------------------------ cancel / refund
 
     /// Owner cancels and gets the full remaining balance back.
+    ///
+    /// While a charge is in flight, its amount is already deducted from
+    /// `balance`, so the refund excludes it. If that charge later fails, the
+    /// callback re-credits the cancelled subscription and the owner collects it
+    /// with `withdraw_unclaimed`. A stale in-flight record is cleared (treated
+    /// as paid, see `InFlightCharge`).
     #[payable]
     pub fn cancel(&mut self, sub_id: u64) -> PromiseOrValue<bool> {
         assert_one_yocto();
@@ -299,6 +353,7 @@ impl Contract {
     }
 
     /// Merchant cancels; the remaining balance is refunded to the owner.
+    /// Same in-flight rules as `cancel`.
     #[payable]
     pub fn merchant_cancel(&mut self, sub_id: u64) -> PromiseOrValue<bool> {
         assert_one_yocto();
@@ -316,6 +371,7 @@ impl Contract {
         require!(sub.owner == env::predecessor_account_id(), "only the subscription owner");
         require!(sub.status == SubStatus::Cancelled, "subscription not cancelled");
         require!(sub.balance.0 > 0, "nothing to withdraw");
+        require_gas_for_transfer();
         self.internal_refund(sub_id).into()
     }
 
@@ -324,7 +380,9 @@ impl Contract {
         if promise_succeeded() {
             return true;
         }
-        let sub = self.subs.get_mut(&sub_id).unwrap_or_else(|| env::panic_str("sub not found"));
+        let Some(sub) = self.subs.get_mut(&sub_id) else {
+            return false;
+        };
         sub.balance = U128(sub.balance.0 + amount.0);
         let (token, owner) = (sub.token.clone(), sub.owner.clone());
         self.add_held(&token, amount.0);
@@ -380,12 +438,12 @@ impl Contract {
     /// Ids (within the page `[from_index, from_index+limit)` of all subscriptions)
     /// on which `charge` would currently succeed or move the subscription to PastDue.
     pub fn get_due(&self, from_index: Option<u32>, limit: Option<u32>) -> Vec<u64> {
-        let now = env::block_timestamp();
+        let (now, height) = (env::block_timestamp(), env::block_height());
         self.subs
             .values()
             .skip(from_index.unwrap_or(0) as usize)
             .take(limit.unwrap_or(MAX_PAGE).min(MAX_PAGE) as usize)
-            .filter(|s| is_due(s, now))
+            .filter(|s| is_due(s, now, height))
             .map(|s| s.id)
             .collect()
     }
@@ -409,9 +467,31 @@ fn reject(amount: U128, reason: &str) -> PromiseOrValue<U128> {
     PromiseOrValue::Value(amount)
 }
 
-fn is_due(s: &Subscription, now: u64) -> bool {
+fn is_stale(f: &InFlightCharge, height: u64) -> bool {
+    height >= f.started_at_block.0 + STALE_CHARGE_BLOCKS
+}
+
+fn require_gas_for_transfer() {
+    let remaining = env::prepaid_gas().saturating_sub(env::used_gas());
+    require!(remaining >= MIN_GAS_FOR_TRANSFER, "insufficient gas: attach 50 TGas");
+}
+
+/// Clears a stale in-flight charge, treating it as successful (never
+/// re-credits, so no double payout). Panics if a non-stale charge is in flight
+/// and `require_clear` is set.
+fn clear_stale_in_flight(sub_id: u64, sub: &mut Subscription, require_clear: bool) {
+    let Some(f) = &sub.in_flight else { return };
+    if is_stale(f, env::block_height()) {
+        RecurraEvent::StaleChargeCleared { sub_id, charge_number: f.charge_number, amount: f.amount }.emit();
+        sub.in_flight = None;
+    } else if require_clear {
+        env::panic_str("charge already in flight");
+    }
+}
+
+fn is_due(s: &Subscription, now: u64, height: u64) -> bool {
     s.status != SubStatus::Cancelled
-        && !s.charging
+        && s.in_flight.as_ref().is_none_or(|f| is_stale(f, height))
         && now >= s.next_charge_at_ns.0
         && s.max_charges.is_none_or(|m| s.charges_count < m)
         // A PastDue sub is only worth retrying once topped up.
@@ -487,6 +567,14 @@ impl Contract {
         if self.sub_by_ref.contains_key(&key) {
             return Err("external_ref already used");
         }
+        // Checked before any state change: a charge_now that could not afford
+        // its transfer + callback returns the tokens instead.
+        if charge_now
+            && env::prepaid_gas().saturating_sub(env::used_gas())
+                < MIN_GAS_FOR_TRANSFER.saturating_add(GAS_FOR_SUBSCRIBE)
+        {
+            return Err("insufficient gas for charge_now");
+        }
 
         let now = env::block_timestamp();
         let period_ns = plan.period_sec as u64 * NS_PER_SEC;
@@ -506,7 +594,7 @@ impl Contract {
             status: SubStatus::Active,
             external_ref: external_ref.clone(),
             created_at_ns: U64(now),
-            charging: false,
+            in_flight: None,
         };
 
         // Write, measure, and roll back if the merchant's pool cannot pay.
@@ -590,10 +678,12 @@ impl Contract {
     }
 
     fn internal_charge(&mut self, sub_id: u64) -> PromiseOrValue<bool> {
+        // Before any state change (all checks below panic => no state persists).
+        require_gas_for_transfer();
         let now = env::block_timestamp();
         let sub = self.subs.get_mut(&sub_id).unwrap_or_else(|| env::panic_str("subscription not found"));
         require!(sub.status != SubStatus::Cancelled, "subscription cancelled");
-        require!(!sub.charging, "charge already in flight");
+        clear_stale_in_flight(sub_id, sub, true);
         require!(now >= sub.next_charge_at_ns.0, "not due yet");
         require!(sub.max_charges.is_none_or(|m| sub.charges_count < m), "max charges reached");
 
@@ -621,8 +711,14 @@ impl Contract {
         sub.charges_count += 1;
         sub.next_charge_at_ns = U64(now + sub.period_ns.0);
         sub.status = SubStatus::Active;
-        sub.charging = true;
-        let memo = format!("recurra:{}:{}", sub_id, sub.charges_count);
+        let charge_number = sub.charges_count;
+        sub.in_flight = Some(InFlightCharge {
+            charge_number,
+            amount,
+            started_at_block: U64(env::block_height()),
+            prev_next_charge_at_ns: prev_next,
+        });
+        let memo = format!("recurra:{sub_id}:{charge_number}");
         let (token, merchant) = (sub.token.clone(), sub.merchant.clone());
         self.sub_held(&token, amount.0);
 
@@ -633,15 +729,19 @@ impl Contract {
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(GAS_FOR_RESOLVE)
-                    .on_charge_resolved(sub_id, amount, prev_next),
+                    .with_unused_gas_weight(0)
+                    .on_charge_resolved(sub_id, charge_number, amount),
             )
             .into()
     }
 
     fn internal_cancel(&mut self, sub_id: u64) -> PromiseOrValue<bool> {
+        require_gas_for_transfer();
         let caller = env::predecessor_account_id();
         let sub = self.subs.get_mut(&sub_id).unwrap();
         require!(sub.status != SubStatus::Cancelled, "already cancelled");
+        // A live in-flight charge stays (its amount is not refunded here); a stale one is cleared.
+        clear_stale_in_flight(sub_id, sub, false);
         sub.status = SubStatus::Cancelled;
         let refund = sub.balance;
         RecurraEvent::Cancelled {
@@ -674,6 +774,7 @@ impl Contract {
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(GAS_FOR_RESOLVE)
+                    .with_unused_gas_weight(0)
                     .on_refund_resolved(sub_id, amount),
             )
     }
