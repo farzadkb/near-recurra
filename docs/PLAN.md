@@ -93,7 +93,7 @@ recurra/
 │   ├── vault/               # Rust, near-sdk 5.x, cargo-near
 │   │   ├── src/lib.rs
 │   │   ├── src/events.rs
-│   │   └── tests/integration.rs   # near-workspaces sandbox
+│   │   └── tests/integration.rs   # near-sandbox + near-api
 │   └── mock-ft/             # NEP-141 via near-contract-standards, tests only
 ├── wp-plugin/recurra-for-woocommerce/
 │   ├── recurra-for-woocommerce.php
@@ -122,7 +122,7 @@ recurra/
 
 ## 3. Contract: Recurra Vault
 
-Rust, `near-sdk` 5.x, built with `cargo near build` (reproducible build), tests with `near-workspaces`. One shared contract, multi-merchant.
+Rust, `near-sdk` 5.x, built with `cargo near build` (reproducible build), tests with `near-sandbox` + `near-api` (the current `cargo near new` template; replaces `near-workspaces`). One shared contract, multi-merchant.
 
 ### State
 
@@ -227,7 +227,21 @@ Rules:
 ### Tests
 
 - Unit (`cargo test`): msg parsing, storage accounting, status transitions, time gating (mock `block_timestamp` via `testing_env!`).
-- Integration (`near-workspaces`, sandbox, mock-ft): full lifecycle — create plan → subscribe via `ft_transfer_call` → charge too early (rejected) → fast-forward (`worker.fast_forward(blocks)`) → charge OK → balance exhausted → PastDue → top_up → Active → cancel → refund; attack cases: wrong token, merchant raising price (impossible), double-charge in same period, charge to unregistered merchant (callback restore), cancel by non-owner.
+- Integration (`near-sandbox` + `near-api`, local sandbox, mock-ft; `tests/integration.rs`): full lifecycle — create plan → subscribe via `ft_transfer_call` → charge too early (rejected) → fast-forward (`sandbox.fast_forward(blocks)` until block time ≥ `next_charge_at_ns`) → charge OK → balance exhausted → PastDue → top_up → Active → cancel → refund; attack cases: wrong token, merchant raising price (impossible), double-charge in same period, charge to unregistered merchant (callback restore), cancel by non-owner.
+
+### Implementation notes (decided in phase 2)
+
+- `MIN_PERIOD_SEC = 60`; `name` ≤ 64 chars; `external_ref` 1–96 chars; `max_charges: 0` rejected.
+- `charge_now` defaults to `true`. `charge_now: false` = first charge one period after subscribing (trial-style); deposit may then be any amount > 0.
+- `Subscription.charging: bool` — set while a charge transfer awaits its callback; `charge` panics while set. Prevents a second charge before `on_charge_resolved` restores state (keeps invariants 4 and 6 independent of period length).
+- `total_held: LookupMap<token, U128>` — sum of balances per token, excluding in-flight amounts; view `get_total_held(token)`. Accounting is per token, so a plan using a fake token can never touch USDC accounting.
+- Extra views: `get_owner`, `get_total_held(token)`, `get_num_subscriptions`. `get_plans` returns `[plan_id, plan]` pairs. Times are `U64` strings (ns) in JSON.
+- `get_due` skips `PastDue` subs whose balance is still below `amount` (no pointless charger calls) and subs with a charge in flight.
+- `charge`/`cancel`/`merchant_cancel`/`withdraw_unclaimed` return the callback's `bool` (true = transfer succeeded). `charge` on insufficient balance returns `false` without panicking.
+- Storage: plan and subscription storage is measured with `env::storage_usage()` (collections flushed first); a subscription the pool cannot pay for is rolled back and the tokens returned. Storage is not released on cancel (history kept).
+- Events: NEP-297 via `#[near(event_json)]`; `data` is a single object. Extra fields: `subscribed.deposit`, `cancelled.cancelled_by`/`refund`, `topped_up.balance`.
+- Gas: `ft_transfer` 10 TGas, callbacks 10 TGas. Subscribe with `charge_now` fits in the 100 TGas `ft_transfer_call`; `charge` fits in 50 TGas.
+- Optimized wasm: vault 226 KB (~2.3 NEAR storage stake), mock-ft 155 KB.
 
 ### Deploy
 
@@ -367,7 +381,7 @@ Contract: `cd contracts/vault && cargo test && cargo test --test integration` ru
 | When                                  | Work                                                                                                                                                                                                | Done when                                         |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
 | **Wed 14:00–17:00**            | Toolchain (rustup + wasm target, `cargo-near`, `near` CLI, Node 20, Docker). Create mainnet + testnet accounts. Get NEAR Builders AI credits not needed. Repo scaffold, MIT LICENSE. | `cargo near build` works on hello contract      |
-| **Wed 17:00–Thu 02:00**        | Vault contract + unit tests + workspaces integration tests. Deploy to testnet with mock-ft, manual lifecycle via CLI.                                                                               | all invariant tests green                         |
+| **Wed 17:00–Thu 02:00**        | Vault contract + unit tests + sandbox integration tests. Deploy to testnet with mock-ft, manual lifecycle via CLI.                                                                               | all invariant tests green                         |
 | **Thu 10:00–18:00**            | Plugin Feature A: gateway, 1Click client + mock, pay page, REST, poller, status mapping. Docker compose.                                                                                            | mock checkout completes in Docker                 |
 | **Thu 18:00–22:00**            | **Real mainnet test**: $1–2 USDC from Arbitrum/Base → merchant USDC on NEAR. Fix whatever breaks. Admin health page.                                                                        | real order auto-completed                         |
 | **Thu 22:00–Fri 01:00**        | Deploy vault to mainnet; storage_deposit vault + merchant on USDC; create demo plan ($1 / 5 min).                                                                                                   | `get_plans` returns plan                        |
