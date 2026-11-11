@@ -13,7 +13,7 @@ WooCommerce payments and recurring billing on NEAR. Work in progress for the NEA
 | cargo-near | 0.23.0 | `curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/cargo-near/releases/latest/download/cargo-near-installer.sh \| sh` |
 | near CLI (near-cli-rs) | 0.31.1 | `curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/near-cli-rs/releases/latest/download/near-cli-rs-installer.sh \| sh` |
 | Node.js | ≥ 20 | https://nodejs.org |
-| Docker + Compose | any recent | https://docs.docker.com/get-docker/ |
+| Docker + Compose | 29.x / v2 (used: Ubuntu `docker.io` + `docker-compose-v2`) | https://docs.docker.com/get-docker/ |
 
 ## Build the contracts
 
@@ -50,29 +50,40 @@ Each invariant from [docs/PLAN.md §3](docs/PLAN.md) has dedicated tests:
 
 | Contract | Account |
 | --- | --- |
-| Recurra Vault | [`vault.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault.recurra-farzad.testnet) |
+| Recurra Vault (current) | [`vault-v2.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault-v2.recurra-farzad.testnet) — reproducible build, wasm sha256 `1ff5dc13b0e32e0f6e1bf3e0773cad3448798e8979590d399b0570779fcc9e6e` (commit `4d60119`) |
 | Mock USDC (6 decimals, test only) | [`musdc.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/musdc.recurra-farzad.testnet) |
 
-Manual lifecycle (plan: 1 mUSDC / 60 s; customer prepaid 3 mUSDC):
+`vault.recurra-farzad.testnet` holds the earlier, non-reproducible build (before the in-flight/gas hardening) and is kept only for history.
+
+Verify the deployed code matches this repo:
+
+```sh
+cd contracts/vault
+cargo near build reproducible-wasm     # needs Docker
+sha256sum target/near/recurra_vault.wasm
+```
+
+→ `1ff5dc13b0e32e0f6e1bf3e0773cad3448798e8979590d399b0570779fcc9e6e` at commit `4d60119`; the same commit and Docker image digest are returned on-chain by `contract_source_metadata` (NEP-330).
+
+Manual lifecycle on `vault-v2` (plan: 1 mUSDC / 60 s; customer prepaid 3 mUSDC):
 
 | Step | Result | Tx |
 | --- | --- | --- |
-| `create_plan` | plan 1 | [6w5U6o…](https://testnet.nearblocks.io/txns/6w5U6oa4BCoAaF2U9AUCpNZyqnQnC1m63Jh1tS4Wwonq) |
-| subscribe via `ft_transfer_call` (`charge_now`) | sub 1, charge #1 → merchant | [3bMDNS…](https://testnet.nearblocks.io/txns/3bMDNSmzui4ozNevhsHdhSvWgtVVdqxzdEQk3ausCffs) |
-| `charge` before period ends | rejected: `not due yet` | [BbymQp…](https://testnet.nearblocks.io/txns/BbymQpNBQHHuWQuk8dkJYYDHrGShVFHrV6VmA4PpKBfX) |
-| `charge` after 60 s (by a third party) | charge #2 → merchant | [DGj9Xv…](https://testnet.nearblocks.io/txns/DGj9Xv29xYDp9i2toX4Eir4JqsgobaCtoCmw77Ynf5qK) |
-| `cancel` by customer | 1 mUSDC refunded to customer | [8TLtSj…](https://testnet.nearblocks.io/txns/8TLtSjz8HJsswdnFLVLAbQ5pG9k2VzTVeTTYJWRN3udN) |
-| `charge` after cancel | rejected: `subscription cancelled` | [EhbEYu…](https://testnet.nearblocks.io/txns/EhbEYu19jHByCN5hkooyq8DWtjSysoL2ifkqw4eBx9Zh) |
-
-Final balances: merchant 2, customer 8 (10 − 3 + 1), vault 0.
+| `create_plan` | plan 1 | [HMbJz6…](https://testnet.nearblocks.io/txns/HMbJz6dBnUJ5qTrCxbhR9vFDK3U39so6jYPDtvstZj2D) |
+| subscribe via `ft_transfer_call` (`charge_now`) | sub 1, charge #1 → merchant | [DtfhaC…](https://testnet.nearblocks.io/txns/DtfhaCBEozpw2RK2U9xqPLjQuiqcTwRw1YJcAKvXaFt9) |
+| `charge` with 25 TGas | rejected before any state change: `insufficient gas` | [DgGU5k…](https://testnet.nearblocks.io/txns/DgGU5kLnfZuZdBfQbFdhjcUmCNZDp4vsvgAMsjL3aBEJ) |
+| `charge` before period ends | rejected: `not due yet` | [55jRMn…](https://testnet.nearblocks.io/txns/55jRMneSzj4ekM8mDeniZQPVEM1UFXe4Y1sRY7ViMjCf) |
+| `charge` after 60 s (by a third party) | charge #2 → merchant | [7uid4U…](https://testnet.nearblocks.io/txns/7uid4UWxF8QkjgJvBhpaGzzPGkEfAP9snd5PmmfDWFR5) |
+| `cancel` by customer | 1 mUSDC refunded to customer | [6rYRsx…](https://testnet.nearblocks.io/txns/6rYRsxodAjkktGponPTGjsGvXJXg9dHdnZVSDdHYdjpx) |
+| `charge` after cancel | rejected: `subscription cancelled` | [KnSX5e…](https://testnet.nearblocks.io/txns/KnSX5eGDfmnXLQ9vQwtJGgC8zyFSKrF8SU4XGbLeSGN) |
 
 Check it yourself:
 
 ```sh
-near contract call-function as-read-only vault.recurra-farzad.testnet get_subscription json-args '{"sub_id":1}' network-config testnet now
+near contract call-function as-read-only vault-v2.recurra-farzad.testnet get_subscription json-args '{"sub_id":1}' network-config testnet now
 ```
 
-→ `"status": "Cancelled"`, `"charges_count": 2`, `"balance": "0"`.
+→ `"status": "Cancelled"`, `"charges_count": 2`, `"balance": "0"`, `"in_flight": null`.
 
 ## License
 
