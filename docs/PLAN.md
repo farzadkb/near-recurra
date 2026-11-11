@@ -326,6 +326,21 @@ Checks with green/red: 1Click reachable; API key valid (dry quote); `merchant_ac
 
 `Recurra_OneClick_Mock` implements the same interface; deposit address = `mock-<hash>`; status advances `PENDING_DEPOSIT → KNOWN_DEPOSIT_TX → PROCESSING → SUCCESS` over ~30s (based on quote creation time), so a judge can do the full checkout in Docker with zero funds. Clearly labelled "MOCK" on the pay page.
 
+### Implementation notes (decided in phase 3)
+
+- Verified against the live OpenAPI spec (`/docs/v0/openapi.yaml`) and a `dry:true` quote: `POST /v0/quote` answers **201**, so the client accepts any 2xx; errors are `{message, error, statusCode}`; dry quotes have no `depositAddress`/`deadline`; asset ids are not always `nep141:` (also `nep245:`, `1cs_v1:`) and are treated as opaque. Fixture: `wp-plugin/recurra-for-woocommerce/tests/fixtures/quote-dry-live.json`.
+- Block checkout (default since WC 8.3) is supported via `Recurra_Blocks` (`AbstractPaymentMethodType`) + `assets/js/blocks.js` (no build step). Classic checkout works through the same gateway.
+- Pay-page config is passed as a `data-config` attribute, not `wp_add_inline_script`: block themes render the receipt template before scripts are enqueued.
+- Amount math is pure integer-string arithmetic (`Recurra_Amount`), no bcmath needed; `decimal_to_base` refuses (never rounds) precision loss.
+- A new quote may replace the current one only if no deposit can still arrive on it: expired while `PENDING_DEPOSIT`, or `REFUNDED`/`FAILED`. Otherwise 409. Old quotes are archived in `_recurra_quote_history` (incl. signature).
+- REST auth: `key` (order key, `hash_equals`, 404 on mismatch) + `X-Recurra-Nonce` (`recurra_order_<id>`); the page also sends `X-WP-Nonce` so logged-in customers keep their identity.
+- SUCCESS is accepted only if `swapDetails.amountOut >= _recurra_expected_out` (our own requested amount), `quoteRequest.recipient == _recurra_recipient`, `quoteRequest.destinationAsset == _recurra_destination_asset` and the status response's deposit address equals the order's. Otherwise on-hold + note.
+- `woocommerce_cancel_unpaid_order` is filtered so hold-stock cleanup cannot cancel an order before quote deadline + 2 h.
+- Same-asset payments (USDC on NEAR → USDC on NEAR) are not offered as an origin token in the MVP.
+- Docker: `DISABLE_WP_CRON` + a `cron` service (`wp cron event run` + `wp action-scheduler run` every 30 s), because WP-cron's loopback to `localhost:8080` cannot work inside the container. Images pinned: `wordpress:7.1.4-php8.2-apache`, `wordpress:cli-2.12.0-php8.2`, `mariadb:11.8.9`, WooCommerce 11.2.2. Demo products: Coffee beans $3 (physical, free shipping) and Digital sticker pack $2; the "Pro plan" subscription product comes with Feature B.
+- Mock mode: `Recurra_OneClick_Mock` with real asset ids and fixed prices; option `recurra_mock_scenario` (success | refunded | incomplete | failed) selects the outcome for tests.
+- Admin health page is phase 4 (Thu 18:00–22:00), not built yet.
+
 ---
 
 ## 5. Subscriptions in WordPress (Feature B)

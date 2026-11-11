@@ -15,6 +15,40 @@ WooCommerce payments and recurring billing on NEAR. Work in progress for the NEA
 | Node.js | ≥ 20 | https://nodejs.org |
 | Docker + Compose | 29.x / v2 (used: Ubuntu `docker.io` + `docker-compose-v2`) | https://docs.docker.com/get-docker/ |
 
+## Try the checkout in 5 minutes (mock mode, no funds)
+
+Needs only Docker. Nothing is installed on your machine; the stack publishes port 8080 only.
+
+```sh
+docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml logs -f wpcli   # wait for: [recurra] ready: http://localhost:8080
+```
+
+→ about 1 minute on first run (downloads WooCommerce 11.2.2). Then, in a browser:
+
+1. Open http://localhost:8080/shop → add **Coffee beans** ($3) → Checkout. Fill any address, pick **Pay with crypto (any chain)** → Place order.
+2. The pay page shows a **MOCK MODE** banner. Pick **USDC — Arbitrum**, enter any EVM refund address (e.g. `0xabababababababababababababababababababab`) → **Get payment address**.
+3. You see the amount (3.015 USDC), a `mock-…` deposit address, a QR code and a countdown. The status changes on its own: *Waiting for your deposit* → *Payment detected* → *converting* → you are redirected to the order-received page in ~30 s.
+4. Admin: http://localhost:8080/wp-admin (`admin` / `admin`, local only) → WooCommerce → Orders → the order is **Processing**; its notes show *payment detected*, *swap complete* and the (mock) NEAR tx.
+
+Automated version of the same flow (block checkout via the WooCommerce Store API → pay page → quote → status):
+
+```sh
+docker compose -f docker/docker-compose.yml run --rm wpcli php /usr/local/bin/e2e-mock.php
+```
+
+→ `E2E OK (success, pay-page polling): order #N pending → on-hold → processing in ~32s`. Variants:
+
+| Command suffix | Checks | Expected last line |
+| --- | --- | --- |
+| `-e E2E_POLL=0` (before `wpcli`) | customer closed the tab; only the 60 s backup poller (Action Scheduler) moves the order | `E2E OK (success, backup poller only): … pending → processing` |
+| `-e E2E_SCENARIO=refunded` | 1Click refunds the customer | `… pending → on-hold → failed` |
+| `-e E2E_SCENARIO=incomplete` | deposit below the quote | `… pending → on-hold` |
+
+Reset everything: `docker compose -f docker/docker-compose.yml down -v`.
+
+Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `51 assertions, 0 failures`.
+
 ## Build the contracts
 
 ```sh

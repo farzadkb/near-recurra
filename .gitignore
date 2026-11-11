@@ -15,8 +15,9 @@ node_modules/
 charger/dist/
 # NOTE: wp-plugin/recurra-for-woocommerce/assets/dist/ IS committed (no build step for judges)
 
-# PHP
-vendor/
+# PHP (Composer). Plugin's assets/vendor/ holds committed third-party JS.
+/vendor/
+wp-plugin/*/vendor/
 
 # Local Claude Code settings
 .claude/settings.local.json

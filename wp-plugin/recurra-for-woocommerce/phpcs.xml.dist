@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<ruleset name="Recurra">
+	<description>WordPress Coding Standards for Recurra for WooCommerce.</description>
+	<file>.</file>
+	<exclude-pattern>assets/vendor/*</exclude-pattern>
+	<arg name="extensions" value="php"/>
+	<rule ref="WordPress"/>
+	<!-- File names are fixed by docs/PLAN.md §2 (class-oneclick-client.php, class-rest.php, ...). -->
+	<rule ref="WordPress.Files.FileName.InvalidClassFileName">
+		<exclude-pattern>includes/*</exclude-pattern>
+	</rule>
+	<!-- The dependency-free test runner stubs WordPress functions. -->
+	<rule ref="Squiz.Commenting">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Generic.Files.OneObjectStructurePerFile">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.Files.FileName">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Universal.Files.SeparateFunctionsFromOO">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Generic.CodeAnalysis.UnusedFunctionParameter">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Universal.NamingConventions.NoReservedKeywordParameterNames">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<config name="minimum_wp_version" value="6.5"/>
+	<config name="text_domain" value="recurra"/>
+</ruleset>

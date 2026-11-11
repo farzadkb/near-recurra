@@ -1,0 +1,89 @@
+# Recurra demo store: WordPress + WooCommerce + Recurra (mock mode).
+#   docker compose -f docker/docker-compose.yml up -d
+#   → http://localhost:8080  (admin / admin, local only)
+# Isolated: own network and volumes; only port 8080 is published.
+
+name: recurra
+
+x-db-env: &db-env
+  WORDPRESS_DB_HOST: db
+  WORDPRESS_DB_USER: wordpress
+  WORDPRESS_DB_PASSWORD: wordpress
+  WORDPRESS_DB_NAME: wordpress
+
+services:
+  db:
+    image: mariadb:11.8.9
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: wordpress
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  wordpress:
+    image: wordpress:7.1.4-php8.2-apache
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${RECURRA_PORT:-8080}:80"
+    environment:
+      <<: *db-env
+      # WP-cron's loopback request cannot reach localhost:8080 from inside the
+      # container, so cron is driven by the `cron` service below instead.
+      WORDPRESS_CONFIG_EXTRA: |
+        define( 'DISABLE_WP_CRON', true );
+        define( 'WP_ENVIRONMENT_TYPE', 'local' );
+    volumes:
+      - wp_data:/var/www/html
+      - ../wp-plugin/recurra-for-woocommerce:/var/www/html/wp-content/plugins/recurra-for-woocommerce:ro
+
+  # One-shot: installs WordPress + WooCommerce, activates Recurra in mock mode,
+  # creates demo products. Idempotent (safe to re-run).
+  wpcli:
+    image: wordpress:cli-2.12.0-php8.2
+    user: "33:33"
+    depends_on:
+      db:
+        condition: service_healthy
+      wordpress:
+        condition: service_started
+    environment:
+      <<: *db-env
+      WP_URL: "http://localhost:${RECURRA_PORT:-8080}"
+    volumes:
+      - wp_data:/var/www/html
+      - ../wp-plugin/recurra-for-woocommerce:/var/www/html/wp-content/plugins/recurra-for-woocommerce:ro
+      - ./wp-init.sh:/usr/local/bin/wp-init.sh:ro
+      - ./e2e-mock.php:/usr/local/bin/e2e-mock.php:ro
+    command: ["sh", "/usr/local/bin/wp-init.sh"]
+    restart: "no"
+
+  # Runs WP-cron + Action Scheduler (Recurra's 60 s backup poller) every 30 s.
+  cron:
+    image: wordpress:cli-2.12.0-php8.2
+    user: "33:33"
+    depends_on:
+      wpcli:
+        condition: service_completed_successfully
+    environment:
+      <<: *db-env
+    volumes:
+      - wp_data:/var/www/html
+      - ../wp-plugin/recurra-for-woocommerce:/var/www/html/wp-content/plugins/recurra-for-woocommerce:ro
+    command:
+      - sh
+      - -c
+      - while true; do wp cron event run --due-now --quiet; wp action-scheduler run --group=recurra --quiet; sleep 30; done
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  wp_data:

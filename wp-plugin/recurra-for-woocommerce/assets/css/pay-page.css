@@ -1,0 +1,16 @@
+.recurra-pay { max-width: 34rem; margin: 1.5rem 0; }
+.recurra-pay label { display: block; font-weight: 600; margin-bottom: .25rem; }
+.recurra-pay select,
+.recurra-pay input[type="text"] { width: 100%; box-sizing: border-box; }
+.recurra-pay small { display: block; opacity: .75; }
+.recurra-mock-banner { padding: .5rem .75rem; border: 2px dashed #b45309; background: #fffbeb; color: #78350f; }
+.recurra-address-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.recurra-address-row code { word-break: break-all; padding: .35rem .5rem; flex: 1 1 16rem; }
+.recurra-qr { width: 12rem; max-width: 100%; margin: 1rem 0; }
+.recurra-qr svg { width: 100%; height: auto; display: block; background: #fff; }
+.recurra-status { font-weight: 600; }
+.recurra-pay[data-status="SUCCESS"] .recurra-status { color: #15803d; }
+.recurra-pay[data-status="REFUNDED"] .recurra-status,
+.recurra-pay[data-status="FAILED"] .recurra-status { color: #b91c1c; }
+.recurra-error { color: #b91c1c; }
+.recurra-tx form { display: flex; gap: .5rem; margin-top: .5rem; }
