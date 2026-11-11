@@ -27,6 +27,7 @@ final class Recurra_Plugin {
 		add_action( 'woocommerce_blocks_payment_method_type_registration', array( __CLASS__, 'register_blocks' ) );
 		add_filter( 'woocommerce_cancel_unpaid_order', array( __CLASS__, 'keep_unpaid_order' ), 10, 2 );
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue_pay_page' ) );
+		add_action( 'admin_notices', array( __CLASS__, 'admin_notices' ) );
 		Recurra_REST::init();
 		Recurra_Poller::init();
 	}
@@ -95,6 +96,27 @@ final class Recurra_Plugin {
 	public static function client_for_order( WC_Order $order ): Recurra_OneClick {
 		$mode = (string) $order->get_meta( '_recurra_mode' );
 		return self::client( '' === $mode ? null : $mode );
+	}
+
+	/**
+	 * Warns store managers when live mode is configured with a testnet merchant
+	 * (possible if options were changed outside the settings page). Checkout is
+	 * already disabled in that state by the gateway's is_available().
+	 */
+	public static function admin_notices(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return;
+		}
+		$s = self::settings();
+		if ( 'yes' !== $s['enabled'] || '' === $s['merchant_account'] || Recurra_Tokens::merchant_allowed_in_mode( $s['mode'], $s['merchant_account'] ) ) {
+			return;
+		}
+		printf(
+			'<div class="notice notice-error"><p>%s <a href="%s">%s</a></p></div>',
+			esc_html__( 'Recurra is in live mode with a .testnet merchant account. Live mode is mainnet-only, so crypto checkout is disabled until you set a mainnet account or switch to mock mode.', 'recurra' ),
+			esc_url( admin_url( 'admin.php?page=wc-settings&tab=checkout&section=' . self::GATEWAY_ID ) ),
+			esc_html__( 'Recurra settings', 'recurra' )
+		);
 	}
 
 	/**

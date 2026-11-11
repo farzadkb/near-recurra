@@ -176,7 +176,12 @@ final class Recurra_REST {
 			return self::error( 'recurra_bad_refund', sprintf( __( 'Enter a valid %s refund address.', 'recurra' ), $token['chainName'] ), 400 );
 		}
 
-		$s = Recurra_Plugin::settings();
+		$s    = Recurra_Plugin::settings();
+		$mode = (string) $order->get_meta( '_recurra_mode' );
+		if ( ! Recurra_Tokens::merchant_allowed_in_mode( '' === $mode ? (string) $s['mode'] : $mode, (string) $s['merchant_account'] ) ) {
+			// Settings changed outside the settings page (e.g. WP-CLI); never quote to a testnet recipient on mainnet.
+			return self::error( 'recurra_misconfigured', __( 'This payment method is temporarily unavailable. Please contact the store.', 'recurra' ), 503 );
+		}
 		try {
 			$amount = Recurra_Plugin::order_amount_micro( $order );
 		} catch ( InvalidArgumentException $e ) {

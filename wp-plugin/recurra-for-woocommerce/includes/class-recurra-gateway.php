@@ -13,6 +13,13 @@ defined( 'ABSPATH' ) || exit;
 class Recurra_Gateway extends WC_Payment_Gateway {
 
 	/**
+	 * Whether the testnet-merchant error was already added during this save.
+	 *
+	 * @var bool
+	 */
+	private $testnet_error_shown = false;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
@@ -145,7 +152,66 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 	}
 
 	/**
-	 * Only for USD stores with a merchant account.
+	 * Refuses switching to live mode while the (posted) merchant is a testnet account;
+	 * the previous mode is kept.
+	 *
+	 * @param string      $key   Field key.
+	 * @param string|null $value Posted value.
+	 */
+	public function validate_mode_field( $key, $value ) {
+		$value = $this->validate_select_field( $key, $value );
+		if ( ! Recurra_Tokens::merchant_allowed_in_mode( $value, $this->posted_text( 'merchant_account' ) ) ) {
+			$this->testnet_error();
+			return (string) $this->get_option( 'mode' );
+		}
+		return $value;
+	}
+
+	/**
+	 * Refuses a testnet merchant account in live mode; the previous account is kept.
+	 *
+	 * @param string      $key   Field key.
+	 * @param string|null $value Posted value.
+	 */
+	public function validate_merchant_account_field( $key, $value ) {
+		$value = trim( $this->validate_text_field( $key, $value ) );
+		if ( ! Recurra_Tokens::merchant_allowed_in_mode( $this->posted_text( 'mode' ), $value ) ) {
+			$this->testnet_error();
+			return (string) $this->get_option( 'merchant_account' );
+		}
+		return $value;
+	}
+
+	/**
+	 * A posted settings value (the settings page nonce is checked by WooCommerce).
+	 *
+	 * @param string $key Field key.
+	 */
+	private function posted_text( string $key ): string {
+		$data  = $this->get_post_data();
+		$field = $this->get_field_key( $key );
+		return isset( $data[ $field ] ) ? sanitize_text_field( wp_unslash( (string) $data[ $field ] ) ) : (string) $this->get_option( $key );
+	}
+
+	/**
+	 * Adds the "testnet account in live mode" error once per save.
+	 */
+	private function testnet_error(): void {
+		if ( ! $this->testnet_error_shown ) {
+			$this->testnet_error_shown = true;
+			WC_Admin_Settings::add_error( self::testnet_message() );
+		}
+	}
+
+	/**
+	 * Message for a testnet merchant in live mode.
+	 */
+	public static function testnet_message(): string {
+		return __( 'Recurra: live mode is mainnet-only (1Click, USDC and the RPC are mainnet), so the merchant account cannot be a .testnet account. The previous value was kept. Use mock mode for testnet accounts.', 'recurra' );
+	}
+
+	/**
+	 * Only for USD stores with a merchant account that is valid for the mode.
 	 */
 	public function is_available() {
 		if ( ! parent::is_available() ) {
@@ -154,7 +220,8 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 		if ( 'USD' !== get_woocommerce_currency() ) {
 			return false;
 		}
-		return '' !== trim( (string) $this->get_option( 'merchant_account' ) );
+		$merchant = trim( (string) $this->get_option( 'merchant_account' ) );
+		return '' !== $merchant && Recurra_Tokens::merchant_allowed_in_mode( (string) $this->get_option( 'mode' ), $merchant );
 	}
 
 	/**

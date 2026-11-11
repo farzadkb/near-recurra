@@ -187,6 +187,16 @@ eq( true, Recurra_Tokens::is_valid_address( 'btc', '1BoatSLRHtKNngkdXEeobR76b53L
 eq( false, Recurra_Tokens::is_valid_address( 'btc', 'bc1 space' ), 'btc whitespace' );
 eq( false, Recurra_Tokens::is_valid_address( 'eth', '' ), 'empty' );
 
+// Merchant account vs mode: live is mainnet-only, mock accepts anything.
+eq( false, Recurra_Tokens::merchant_allowed_in_mode( 'live', 'merchant.recurra-farzad.testnet' ), 'live refuses .testnet' );
+eq( false, Recurra_Tokens::merchant_allowed_in_mode( 'live', 'shop.TESTNET' ), 'live refuses .testnet (case)' );
+eq( false, Recurra_Tokens::merchant_allowed_in_mode( 'live', 'testnet' ), 'live refuses top-level testnet' );
+eq( true, Recurra_Tokens::merchant_allowed_in_mode( 'live', 'recurra-shop.near' ), 'live accepts .near' );
+eq( true, Recurra_Tokens::merchant_allowed_in_mode( 'live', 'mytestnet.near' ), 'live accepts testnet-looking .near' );
+eq( true, Recurra_Tokens::merchant_allowed_in_mode( 'live', str_repeat( 'a1', 32 ) ), 'live accepts implicit' );
+eq( true, Recurra_Tokens::merchant_allowed_in_mode( 'mock', 'merchant.recurra-farzad.testnet' ), 'mock accepts .testnet' );
+eq( false, Recurra_Tokens::merchant_allowed_in_mode( '', 'shop.testnet' ), 'unknown mode treated as live' );
+
 // Token filtering (mock list): BSC/Tron minimums, memo chains, destination excluded.
 $mock    = new Recurra_OneClick_Mock();
 $usdc    = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';

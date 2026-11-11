@@ -5,6 +5,13 @@
 	<exclude-pattern>assets/vendor/*</exclude-pattern>
 	<arg name="extensions" value="php"/>
 	<rule ref="WordPress"/>
+	<rule ref="WordPress.WP.Capabilities">
+		<properties>
+			<property name="custom_capabilities" type="array">
+				<element value="manage_woocommerce"/>
+			</property>
+		</properties>
+	</rule>
 	<!-- File names are fixed by docs/PLAN.md §2 (class-oneclick-client.php, class-rest.php, ...). -->
 	<rule ref="WordPress.Files.FileName.InvalidClassFileName">
 		<exclude-pattern>includes/*</exclude-pattern>

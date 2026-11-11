@@ -175,6 +175,28 @@ final class Recurra_Tokens {
 	}
 
 	/**
+	 * Whether a NEAR account id belongs to testnet (top-level account "testnet").
+	 *
+	 * @param string $account Account id.
+	 */
+	public static function is_testnet_account( string $account ): bool {
+		$account = strtolower( trim( $account ) );
+		return 'testnet' === $account || str_ends_with( $account, '.testnet' );
+	}
+
+	/**
+	 * Whether a merchant account may be used in a mode. Live mode is mainnet-only
+	 * (1Click, native USDC and the RPC are mainnet), so testnet accounts are refused;
+	 * mock mode moves no funds and accepts any account.
+	 *
+	 * @param string $mode    'live' | 'mock'.
+	 * @param string $account Merchant account id.
+	 */
+	public static function merchant_allowed_in_mode( string $mode, string $account ): bool {
+		return 'mock' === $mode || ! self::is_testnet_account( $account );
+	}
+
+	/**
 	 * Placeholder hint for the refund address field.
 	 *
 	 * @param string $chain Blockchain id.

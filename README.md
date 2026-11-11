@@ -47,7 +47,7 @@ docker compose -f docker/docker-compose.yml run --rm wpcli php /usr/local/bin/e2
 
 Reset everything: `docker compose -f docker/docker-compose.yml down -v`.
 
-Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `51 assertions, 0 failures`.
+Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `59 assertions, 0 failures`.
 
 ## Build the contracts
 
