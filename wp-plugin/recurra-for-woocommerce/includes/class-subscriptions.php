@@ -1029,12 +1029,12 @@ final class Recurra_Subscriptions {
 		if ( ! $account && ! $pay ) {
 			return;
 		}
-		wp_enqueue_style( 'recurra-pay', RECURRA_URL . 'assets/css/pay-page.css', array(), RECURRA_VERSION );
-		wp_enqueue_script( 'recurra-wallet', RECURRA_URL . 'assets/dist/recurra-wallet.js', array(), RECURRA_VERSION, true );
+		wp_enqueue_style( 'recurra-pay', RECURRA_URL . 'assets/css/pay-page.css', array(), Recurra_Plugin::asset_version( 'assets/css/pay-page.css' ) );
+		wp_enqueue_script( 'recurra-wallet', RECURRA_URL . 'assets/dist/recurra-wallet.js', array(), Recurra_Plugin::asset_version( 'assets/dist/recurra-wallet.js' ), true );
 		if ( $pay ) {
-			wp_enqueue_script( 'recurra-subscribe', RECURRA_URL . 'assets/js/subscribe-page.js', array( 'recurra-wallet' ), RECURRA_VERSION, true );
+			wp_enqueue_script( 'recurra-subscribe', RECURRA_URL . 'assets/js/subscribe-page.js', array( 'recurra-wallet' ), Recurra_Plugin::asset_version( 'assets/js/subscribe-page.js' ), true );
 		} else {
-			wp_enqueue_script( 'recurra-account', RECURRA_URL . 'assets/js/account-subscriptions.js', array( 'recurra-wallet' ), RECURRA_VERSION, true );
+			wp_enqueue_script( 'recurra-account', RECURRA_URL . 'assets/js/account-subscriptions.js', array( 'recurra-wallet' ), Recurra_Plugin::asset_version( 'assets/js/account-subscriptions.js' ), true );
 		}
 	}
 

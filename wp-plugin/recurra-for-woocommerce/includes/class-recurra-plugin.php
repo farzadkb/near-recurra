@@ -171,6 +171,17 @@ final class Recurra_Plugin {
 	}
 
 	/**
+	 * Asset version for cache busting: plugin version + file modification time,
+	 * so browsers pick up a rebuilt bundle immediately.
+	 *
+	 * @param string $rel Path relative to the plugin directory.
+	 */
+	public static function asset_version( string $rel ): string {
+		$mtime = @filemtime( RECURRA_DIR . $rel ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Missing file falls back to the plugin version.
+		return RECURRA_VERSION . ( $mtime ? '.' . $mtime : '' );
+	}
+
+	/**
 	 * Enqueues pay-page assets on the order-pay endpoint of a Recurra order.
 	 */
 	public static function enqueue_pay_page(): void {
@@ -183,9 +194,9 @@ final class Recurra_Plugin {
 		if ( ! $order || self::GATEWAY_ID !== $order->get_payment_method() || Recurra_Subscriptions::is_subscription_order( $order ) ) {
 			return;
 		}
-		wp_enqueue_style( 'recurra-pay', RECURRA_URL . 'assets/css/pay-page.css', array(), RECURRA_VERSION );
+		wp_enqueue_style( 'recurra-pay', RECURRA_URL . 'assets/css/pay-page.css', array(), self::asset_version( 'assets/css/pay-page.css' ) );
 		wp_enqueue_script( 'recurra-qrcode', RECURRA_URL . 'assets/vendor/qrcode-generator/qrcode.js', array(), '1.4.4', true );
-		wp_enqueue_script( 'recurra-pay', RECURRA_URL . 'assets/js/pay-page.js', array( 'recurra-qrcode' ), RECURRA_VERSION, true );
+		wp_enqueue_script( 'recurra-pay', RECURRA_URL . 'assets/js/pay-page.js', array( 'recurra-qrcode' ), self::asset_version( 'assets/js/pay-page.js' ), true );
 	}
 
 	/**
