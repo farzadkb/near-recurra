@@ -179,10 +179,11 @@ list( $s, , $bad ) = http(
 
 $refund = '0x' . str_repeat( 'ab', 20 );
 
-// Mock outcome for this run (success | refunded | incomplete | failed).
+// Mock outcome for this run (success | refunded | incomplete | failed | double).
+// "double": the quote is replaced after OUR deadline and BOTH addresses get paid.
 $scenario = getenv( 'E2E_SCENARIO' ) ? getenv( 'E2E_SCENARIO' ) : 'success';
-in_array( $scenario, array( 'success', 'refunded', 'incomplete', 'failed' ), true ) || fail( "unknown E2E_SCENARIO {$scenario}" );
-shell_exec( $wp . ' option update recurra_mock_scenario ' . escapeshellarg( $scenario ) . ' --quiet 2>/dev/null' );
+in_array( $scenario, array( 'success', 'refunded', 'incomplete', 'failed', 'double' ), true ) || fail( "unknown E2E_SCENARIO {$scenario}" );
+shell_exec( $wp . ' option update recurra_mock_scenario ' . escapeshellarg( 'double' === $scenario ? 'success' : $scenario ) . ' --quiet 2>/dev/null' );
 
 list( $s, , $quote ) = http(
 	'POST',
@@ -193,7 +194,6 @@ list( $s, , $quote ) = http(
 	),
 	$rauth
 );
-shell_exec( $wp . ' option delete recurra_mock_scenario --quiet 2>/dev/null' );
 200 === $s || fail( "quote HTTP {$s}", $quote );
 echo "quote ({$scenario}): send {$quote['quote']['amountInFormatted']} {$quote['quote']['token']} to {$quote['quote']['depositAddress']}\n";
 
@@ -208,6 +208,30 @@ list( $s ) = http(
 );
 409 === $s || fail( "second quote while first is active should be 409, got {$s}" );
 
+// Countdown = OUR deadline (quote lifetime 30 min), not 1Click's (+72 h).
+$left = (int) $quote['quote']['deadlineTs'] - time();
+( $left > 25 * 60 && $left <= 30 * 60 + 5 ) || fail( "countdown should be ~30 min, got {$left}s", $quote['quote'] );
+echo 'countdown OK: ' . intdiv( $left, 60 ) . " min, ends {$quote['quote']['deadlineText']} (site time); 1Click deadline is +72 h\n";
+
+$first_address = $quote['quote']['depositAddress'];
+if ( 'double' === $scenario ) {
+	// Our deadline passes while the first address is still PENDING_DEPOSIT.
+	shell_exec( $wp . ' eval ' . escapeshellarg( '$o = wc_get_order(' . $order_id . '); $o->update_meta_data( "_recurra_deadline", gmdate( "Y-m-d\\TH:i:s.000\\Z", time() - 60 ) ); $o->save();' ) . ' 2>/dev/null' );
+	list( $s, , $quote ) = http(
+		'POST',
+		$rest . '/quote' . $q,
+		array(
+			'origin_asset' => $asset,
+			'refund_to'    => $refund,
+		),
+		$rauth
+	);
+	200 === $s || fail( "new quote after our deadline should be allowed, got {$s}", $quote );
+	$quote['quote']['depositAddress'] !== $first_address || fail( 'new quote reused the old address' );
+	echo "new quote after our deadline: {$quote['quote']['depositAddress']} (old {$first_address} stays watched); customer pays BOTH\n";
+}
+shell_exec( $wp . ' option delete recurra_mock_scenario --quiet 2>/dev/null' );
+
 // 6. Watch the order. E2E_POLL=1 (default): poll the REST status endpoint like the
 // pay page. E2E_POLL=0: customer closed the tab — only the backup poller
 // (Action Scheduler via the `cron` service) may move the order; read it via WP-CLI.
@@ -215,6 +239,7 @@ $poll    = '0' !== getenv( 'E2E_POLL' );
 $timeout = $poll ? 90 : 180;
 $expect  = array(
 	'success'    => array( 'processing', 'completed' ),
+	'double'     => array( 'processing', 'completed' ),
 	'refunded'   => array( 'failed' ),
 	'failed'     => array( 'failed' ),
 	'incomplete' => array( 'on-hold' ),
@@ -242,7 +267,19 @@ while ( time() - $start < $timeout ) {
 $statuses = array_values( array_unique( array_map( static fn( $l ) => strtok( $l, ' ' ), $seen ) ) );
 $final    = end( $statuses );
 in_array( $final, $expect, true ) || fail( 'unexpected final status: ' . implode( ' → ', $statuses ) );
-if ( 'success' === $scenario && $poll ) {
+if ( 'double' === $scenario ) {
+	// The backup poller (cron service, every 60 s) watches the replaced address too.
+	$notes = '';
+	for ( $i = 0; $i < 30 && false === strpos( $notes, 'EXTRA PAYMENT' ); $i++ ) {
+		sleep( 5 );
+		$notes = (string) shell_exec( $wp . ' eval ' . escapeshellarg( 'foreach ( wc_get_order_notes( array( "order_id" => ' . $order_id . ' ) ) as $n ) { echo $n->content, "\n"; } echo "paid_address=", wc_get_order(' . $order_id . ')->get_meta( "_recurra_paid_address" ), "\n";' ) . ' 2>/dev/null' );
+	}
+	false !== strpos( $notes, 'EXTRA PAYMENT' ) || fail( 'no extra-payment note for the second address', $notes );
+	1 === substr_count( $notes, 'swap complete' ) || fail( 'order must be completed exactly once', $notes );
+	preg_match( '/paid_address=(\S+)/', $notes, $pm );
+	echo 'paid once via ' . ( $pm[1] ?? '?' ) . "; extra payment flagged for manual refund\n";
+}
+if ( in_array( $scenario, array( 'success', 'double' ), true ) && $poll ) {
 	( in_array( 'pending', $statuses, true ) && in_array( 'on-hold', $statuses, true ) ) || fail( 'expected pending → on-hold before paid: ' . implode( ' → ', $statuses ) );
 }
 

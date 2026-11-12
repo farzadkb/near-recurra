@@ -124,10 +124,12 @@ class Recurra_OneClick_Mock implements Recurra_OneClick {
 			return $response;
 		}
 
-		$address                               = 'mock-' . substr( hash( 'sha256', wp_json_encode( $request ) . microtime() . wp_rand() ), 0, 24 );
-		$response['quote']['depositAddress']   = $address;
-		$response['quote']['deadline']         = (string) $request['deadline'];
-		$response['quote']['timeWhenInactive'] = (string) $request['deadline'];
+		$address                             = 'mock-' . substr( hash( 'sha256', wp_json_encode( $request ) . microtime() . wp_rand() ), 0, 24 );
+		$response['quote']['depositAddress'] = $address;
+		// Like the live API (observed 2026-11-11): 1Click's own deadline is 72 h after ours.
+		$late                                  = gmdate( 'Y-m-d\TH:i:s.000\Z', (int) strtotime( (string) $request['deadline'] ) + 72 * HOUR_IN_SECONDS );
+		$response['quote']['deadline']         = $late;
+		$response['quote']['timeWhenInactive'] = $late;
 
 		update_option(
 			self::OPTION_PREFIX . $address,

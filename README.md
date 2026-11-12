@@ -44,10 +44,11 @@ docker compose -f docker/docker-compose.yml run --rm wpcli php /usr/local/bin/e2
 | `-e E2E_POLL=0` (before `wpcli`) | customer closed the tab; only the 60 s backup poller (Action Scheduler) moves the order | `E2E OK (success, backup poller only): … pending → processing` |
 | `-e E2E_SCENARIO=refunded` | 1Click refunds the customer | `… pending → on-hold → failed` |
 | `-e E2E_SCENARIO=incomplete` | deposit below the quote | `… pending → on-hold` |
+| `-e E2E_SCENARIO=double` | quote replaced after our 30-min deadline, customer pays **both** addresses | order paid once; an `EXTRA PAYMENT` admin note flags the second payment for manual refund (~100 s) |
 
 Reset everything: `docker compose -f docker/docker-compose.yml down -v`.
 
-Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `64 assertions, 0 failures`.
+Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `75 assertions, 0 failures`.
 
 ## Subscriptions (Feature B) — testnet
 

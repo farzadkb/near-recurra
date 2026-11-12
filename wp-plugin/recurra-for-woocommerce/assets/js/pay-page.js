@@ -84,19 +84,22 @@
 			qr.make();
 			qrBox.innerHTML = qr.createSvgTag( { cellSize: 4, margin: 2, scalable: true } );
 		}
-		startCountdown( q.deadlineTs );
+		startCountdown( q.deadlineTs, q.deadlineText );
 		setStatus( q.lastStatus || 'PENDING_DEPOSIT', q );
 		startPolling();
 	}
 
-	function startCountdown( deadlineTs ) {
+	function startCountdown( deadlineTs, deadlineText ) {
 		clearInterval( countdownTimer );
 		var el = $( 'recurra-countdown' );
+		var pad = function ( n ) { return ( n < 10 ? '0' : '' ) + n; };
 		function tick() {
+			// deadlineTs is UTC seconds; the difference is timezone-independent.
 			var left = Math.max( 0, Math.floor( deadlineTs - Date.now() / 1000 ) );
-			var m = Math.floor( left / 60 );
+			var h = Math.floor( left / 3600 );
+			var m = Math.floor( ( left % 3600 ) / 60 );
 			var s = left % 60;
-			el.textContent = m + ':' + ( s < 10 ? '0' : '' ) + s;
+			el.textContent = ( h ? h + ':' + pad( m ) : m ) + ':' + pad( s ) + ( deadlineText ? ' (' + deadlineText + ')' : '' );
 		}
 		tick();
 		countdownTimer = setInterval( tick, 1000 );

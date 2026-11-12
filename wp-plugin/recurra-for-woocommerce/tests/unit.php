@@ -11,6 +11,7 @@
 define( 'ABSPATH', __DIR__ . '/' );
 define( 'RECURRA_VERSION', 'test' );
 define( 'MINUTE_IN_SECONDS', 60 );
+define( 'HOUR_IN_SECONDS', 3600 );
 
 // Minimal WordPress stubs.
 $GLOBALS['recurra_test_options'] = array();
@@ -115,6 +116,7 @@ require __DIR__ . '/../includes/interface-recurra-oneclick.php';
 require __DIR__ . '/../includes/class-oneclick-mock.php';
 require __DIR__ . '/../includes/class-recurra-tokens.php';
 require __DIR__ . '/../includes/class-near-rpc.php';
+require __DIR__ . '/../includes/class-recurra-order-sync.php';
 
 $failures = 0;
 $count    = 0;
@@ -262,6 +264,26 @@ eq( false, isset( $q['quote']['depositAddress'] ), 'dry quote has no deposit add
 $req['originAsset'] = 'nep141:wrap.near';
 $q                  = $mock->quote( $req );
 eq( '536000000000000000000001', $q['quote']['amountIn'], 'mock amountIn wNEAR (24 decimals)' );
+
+// Deadlines: ours drives the UI (capped by 1Click's), the later one + 2 h drives watching.
+$ours  = Recurra_Order_Sync::ts( '2026-11-11T21:31:45.000Z' );
+$quote = Recurra_Order_Sync::ts( '2026-11-14T21:31:45.000Z' );
+eq( '2026-11-11T21:31:45+00:00', gmdate( 'c', $ours ), 'parse UTC ISO deadline' );
+eq( 0, Recurra_Order_Sync::ts( '' ), 'empty deadline' );
+eq( 0, Recurra_Order_Sync::ts( 'garbage' ), 'invalid deadline' );
+eq( $ours, Recurra_Order_Sync::display_deadline( $ours, $quote ), 'countdown uses our deadline when 1Click is later (live: +72 h)' );
+eq( $ours - 60, Recurra_Order_Sync::display_deadline( $ours, $ours - 60 ), 'countdown capped by an earlier 1Click deadline' );
+eq( $ours, Recurra_Order_Sync::display_deadline( $ours, 0 ), 'countdown without 1Click deadline' );
+eq( $quote, Recurra_Order_Sync::display_deadline( 0, $quote ), 'countdown without our deadline (legacy)' );
+eq( $quote + 7200, Recurra_Order_Sync::watch_until( $ours, $quote ), 'watch until the later deadline + 2 h' );
+eq( $ours + 7200, Recurra_Order_Sync::watch_until( $ours, $ours - 600 ), 'watch: ours is later' );
+eq( 0, Recurra_Order_Sync::watch_until( 0, 0 ), 'watch: no deadlines' );
+// Mock mimics the live API: quote.deadline = ours + 72 h.
+$req['dry']         = false;
+$req['originAsset'] = 'nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near';
+$req['deadline']    = '2026-11-11T21:31:45.000Z';
+$q                  = $mock->quote( $req );
+eq( '2026-11-14T21:31:45.000Z', $q['quote']['deadline'], 'mock quote.deadline = ours + 72 h' );
 
 echo "{$count} assertions, {$failures} failures\n";
 exit( $failures ? 1 : 0 );

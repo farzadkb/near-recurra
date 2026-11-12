@@ -368,6 +368,13 @@ Own minimal model — **no dependency on WooCommerce Subscriptions**.
 - WP Action Scheduler job (every 10 min): for each order with `_recurra_sub_id`, view `get_subscription`; if `charges_count` increased since last seen → create **renewal order** (copy line items, `payment_complete("recurra:sub<id>:<n>")`, note links to nearblocks). If `PastDue` → mark customer subscription "past due", email top-up link (top-up = `ft_transfer_call` with `{"top_up":{"sub_id":…}}`). If `Cancelled` → stop.
 - My Account → "Subscriptions" tab: list subs by connected account (`get_subscriptions_by_owner`), balance, next charge date, **Cancel** button (wallet signs `cancel(sub_id)` with 1 yocto). Cancel lives in the user's wallet, not in the merchant's database — that's the point.
 
+### Deadlines (fixed after the first live payment)
+
+- 1Click returns `quote.deadline` = `quote.timeWhenInactive` = **our requested deadline + 72 h** (live order, 2026-11-11: ours 21:31:45Z, theirs 3 days later). The plugin had stored theirs, so the countdown showed ~72 h.
+- Now: `_recurra_deadline` = our requested deadline, `_recurra_quote_deadline` = 1Click's (UTC ISO). Countdown = min(ours, theirs), shown with the end time in the site timezone. Every address is polled until max(ours, theirs) + 2 h, including addresses replaced by a new quote (`_recurra_watch`, each with its own expected amount / recipient / asset).
+- A new quote is allowed after OUR deadline while the current address is still `PENDING_DEPOSIT`. The first verified SUCCESS on any address completes the order (`_recurra_paid_address`); any further verified SUCCESS, or one on a cancelled/refunded order, adds one `EXTRA PAYMENT` admin note per address (`_recurra_extra_payments`) for manual refund. The backup poller therefore also looks at paid, failed and cancelled orders from the last 5 days, but only while some address is still inside its watch window.
+- Mock mode mimics the +72 h `quote.deadline`.
+
 ### Implementation notes (decided in phase 5)
 
 - Wallets: `@near-wallet-selector/core` 10.1.4 with MyNearWallet, Meteor, Intear (+ HOT on mainnet), bundled by esbuild into `assets/dist/recurra-wallet.js` (committed; `npm ci && npm run build` in the plugin to rebuild). No `modal-ui` (it pulls React); the plugin renders its own wallet buttons. Node's `util` is aliased to a 30-line shim (only `util.format` is used, by a dependency of `@near-js/accounts`). Bundle ≈ 1.5 MB minified / 465 KB gzip (zod via Meteor's SDK is 445 KB); it loads only on the subscribe page and My Account → Subscriptions.

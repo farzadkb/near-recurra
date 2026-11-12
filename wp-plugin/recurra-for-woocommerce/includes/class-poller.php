@@ -36,31 +36,27 @@ final class Recurra_Poller {
 	}
 
 	/**
-	 * Polls open Recurra orders that have a quote, until deadline + 2 h.
+	 * Polls every deposit address of recent Recurra orders (current and replaced)
+	 * until max(our deadline, 1Click's deadline) + 2 h. Paid / cancelled orders are
+	 * included so that a second payment is flagged for refund.
 	 */
 	public static function run(): void {
 		update_option( 'recurra_last_poll', time(), false );
 		$orders = wc_get_orders(
 			array(
 				'payment_method' => Recurra_Plugin::GATEWAY_ID,
-				'status'         => array( 'pending', 'on-hold' ),
-				'date_created'   => '>' . ( time() - 3 * DAY_IN_SECONDS ),
+				'status'         => array( 'pending', 'on-hold', 'failed', 'processing', 'completed', 'cancelled' ),
+				'date_created'   => '>' . ( time() - 5 * DAY_IN_SECONDS ),
 				'limit'          => self::BATCH,
 				'orderby'        => 'date',
 				'order'          => 'DESC',
 			)
 		);
+		$now    = time();
 		foreach ( $orders as $order ) {
-			if ( '' === (string) $order->get_meta( '_recurra_deposit_address' ) ) {
-				continue;
+			if ( Recurra_Order_Sync::needs_watch( $order, $now ) ) {
+				Recurra_Order_Sync::poll_all( $order );
 			}
-			$deadline = strtotime( (string) $order->get_meta( '_recurra_deadline' ) );
-			$last     = (string) $order->get_meta( '_recurra_last_status' );
-			// Past deadline + 2 h with no deposit ever seen: nothing can arrive any more.
-			if ( $deadline && time() > $deadline + 2 * HOUR_IN_SECONDS && 'PENDING_DEPOSIT' === $last ) {
-				continue;
-			}
-			Recurra_Order_Sync::refresh( $order, false );
 		}
 	}
 }

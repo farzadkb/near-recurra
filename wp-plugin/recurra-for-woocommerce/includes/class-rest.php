@@ -272,7 +272,9 @@ final class Recurra_REST {
 			return self::error( 'recurra_bad_quote', __( 'Unexpected quote from 1Click: ', 'recurra' ) . $problem, 502 );
 		}
 
-		// Archive the previous quote (dispute evidence), then store the new one.
+		// Archive the previous quote (dispute evidence) and keep watching its address
+		// until 1Click's own deadline (+2 h), then store the new one.
+		Recurra_Order_Sync::archive_current( $order );
 		$old = (string) $order->get_meta( '_recurra_quote' );
 		if ( '' !== $old ) {
 			$history   = json_decode( (string) $order->get_meta( '_recurra_quote_history' ), true );
@@ -290,7 +292,9 @@ final class Recurra_REST {
 		// Entire response incl. signature.
 		$order->update_meta_data( '_recurra_deposit_address', (string) $q['depositAddress'] );
 		$order->update_meta_data( '_recurra_expected_out', $amount );
-		$order->update_meta_data( '_recurra_deadline', (string) ( $q['deadline'] ?? $req['deadline'] ) );
+		// UTC ISO-8601. Ours drives the UI; 1Click's (often +72 h) drives how long we watch.
+		$order->update_meta_data( '_recurra_deadline', $req['deadline'] );
+		$order->update_meta_data( '_recurra_quote_deadline', (string) ( $q['deadline'] ?? $q['timeWhenInactive'] ?? '' ) );
 		$order->update_meta_data( '_recurra_recipient', $req['recipient'] );
 		$order->update_meta_data( '_recurra_destination_asset', $req['destinationAsset'] );
 		$order->update_meta_data( '_recurra_origin_asset', $token['assetId'] );
@@ -375,8 +379,7 @@ final class Recurra_REST {
 		if ( ! is_array( $raw ) || empty( $raw['quote']['depositAddress'] ) ) {
 			return null;
 		}
-		$deadline = (string) $order->get_meta( '_recurra_deadline' );
-		$ts       = strtotime( $deadline );
+		$ts = Recurra_Order_Sync::order_display_deadline( $order );
 		return array(
 			'depositAddress'    => (string) $raw['quote']['depositAddress'],
 			'amountIn'          => (string) $raw['quote']['amountIn'],
@@ -385,8 +388,10 @@ final class Recurra_REST {
 			'token'             => (string) $order->get_meta( '_recurra_origin_label' ),
 			'originAsset'       => (string) $order->get_meta( '_recurra_origin_asset' ),
 			'refundTo'          => (string) $order->get_meta( '_recurra_refund_to' ),
-			'deadline'          => $deadline,
+			'deadline'          => $ts ? gmdate( 'c', $ts ) : '',
 			'deadlineTs'        => $ts ? $ts : null,
+			// Site timezone for display; all stored values are UTC.
+			'deadlineText'      => $ts ? wp_date( (string) get_option( 'time_format' ) . ' T', $ts ) : '',
 			'expired'           => $ts && time() > $ts,
 			'lastStatus'        => (string) $order->get_meta( '_recurra_last_status' ),
 			'explorer'          => 'https://explorer.near-intents.org',
@@ -413,7 +418,9 @@ final class Recurra_REST {
 		if ( in_array( $status, array( 'REFUNDED', 'FAILED' ), true ) ) {
 			return null;
 		}
-		$deadline = strtotime( (string) $order->get_meta( '_recurra_deadline' ) );
+		// After OUR deadline a still-unpaid address may be replaced; it stays watched
+		// (Recurra_Order_Sync::archive_current) in case the customer pays it anyway.
+		$deadline = Recurra_Order_Sync::order_display_deadline( $order );
 		if ( 'PENDING_DEPOSIT' === $status && $deadline && time() > $deadline ) {
 			return null;
 		}
