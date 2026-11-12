@@ -46,6 +46,17 @@ docker compose -f docker/docker-compose.yml run --rm wpcli php /usr/local/bin/e2
 | `-e E2E_SCENARIO=incomplete` | deposit below the quote | `… pending → on-hold` |
 | `-e E2E_SCENARIO=double` | quote replaced after our 30-min deadline, customer pays **both** addresses | order paid once; an `EXTRA PAYMENT` admin note flags the second payment for manual refund (~100 s) |
 
+**Order storage (HPOS).** The stack starts like a new WooCommerce shop: HPOS (custom order tables) on, compatibility sync off — check with `docker compose -f docker/docker-compose.yml run --rm wpcli wp wc hpos status` → `HPOS enabled?: yes`. Recurra uses only WooCommerce's order CRUD APIs and no order meta queries, so it works with every storage mode. To repeat the E2E runs in another mode, switch first (orders are synced before switching, nothing is lost):
+
+```sh
+docker compose -f docker/docker-compose.yml run --rm wpcli sh /usr/local/bin/hpos-mode.sh on  nosync   # default for new shops
+docker compose -f docker/docker-compose.yml run --rm wpcli sh /usr/local/bin/hpos-mode.sh on  sync     # HPOS + compatibility mode
+docker compose -f docker/docker-compose.yml run --rm wpcli sh /usr/local/bin/hpos-mode.sh off sync     # legacy posts + sync
+docker compose -f docker/docker-compose.yml run --rm wpcli sh /usr/local/bin/hpos-mode.sh off nosync   # legacy posts only
+```
+
+→ prints `HPOS enabled?: yes|no` and `Compatibility mode enabled?: yes|no`; then run the E2E commands above (and the testnet subscription E2E below). A fresh stack with legacy storage: `RECURRA_HPOS=off docker compose -f docker/docker-compose.yml up -d`.
+
 Reset everything: `docker compose -f docker/docker-compose.yml down -v`.
 
 Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `75 assertions, 0 failures`.

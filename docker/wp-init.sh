@@ -42,6 +42,14 @@ fi
 wp plugin activate woocommerce --quiet
 wp plugin activate recurra-for-woocommerce --quiet
 
+# Order storage: HPOS (WooCommerce's default for new stores) unless RECURRA_HPOS=off.
+# Recurra works with both; switch later with docker/hpos-mode.sh.
+if [ "${RECURRA_HPOS:-on}" = on ]; then
+	wp wc hpos status 2>/dev/null | grep -q "HPOS enabled?: yes" || { wp wc hpos sync --quiet 2>/dev/null || true; wp wc hpos enable --quiet; }
+else
+	wp wc hpos status 2>/dev/null | grep -q "HPOS enabled?: no" || { wp wc hpos sync --quiet 2>/dev/null || true; wp wc hpos disable --quiet; }
+fi
+
 # Store basics: USD, no onboarding wizard, store visible to guests.
 opt woocommerce_currency USD
 opt woocommerce_default_country "US:CA"
@@ -89,4 +97,4 @@ $p->save();
 echo "[recurra] Pro plan linked to vault plan " . getenv( "PLAN_ID" ) . "\n";
 '
 
-echo "[recurra] ready: $WP_URL (admin/admin) — checkout in MOCK mode, subscriptions on testnet ($VAULT)"
+echo "[recurra] ready: $WP_URL (admin/admin) — checkout in MOCK mode, subscriptions on testnet ($VAULT), HPOS ${RECURRA_HPOS:-on}"

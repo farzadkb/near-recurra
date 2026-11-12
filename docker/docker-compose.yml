@@ -57,12 +57,14 @@ services:
         condition: service_started
     environment:
       <<: *db-env
+      RECURRA_HPOS: "${RECURRA_HPOS:-on}"
       WP_URL: "http://localhost:${RECURRA_PORT:-8080}"
     volumes:
       - wp_data:/var/www/html
       - ../wp-plugin/recurra-for-woocommerce:/var/www/html/wp-content/plugins/recurra-for-woocommerce:ro
       - ./wp-init.sh:/usr/local/bin/wp-init.sh:ro
       - ./e2e-mock.php:/usr/local/bin/e2e-mock.php:ro
+      - ./hpos-mode.sh:/usr/local/bin/hpos-mode.sh:ro
     command: ["sh", "/usr/local/bin/wp-init.sh"]
     restart: "no"
 
