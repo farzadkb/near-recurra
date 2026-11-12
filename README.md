@@ -50,17 +50,77 @@ Reset everything: `docker compose -f docker/docker-compose.yml down -v`.
 
 Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `75 assertions, 0 failures`.
 
-## Subscriptions (Feature B) — testnet
+## Try subscriptions on testnet (Feature B, ~15 minutes, no real money)
 
-The Docker store also sells **Pro plan (testnet)**, $1 every 5 minutes, backed by the public testnet vault [`vault-v2.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault-v2.recurra-farzad.testnet) (plan 2, token `musdc.recurra-farzad.testnet`, merchant `merchant.recurra-farzad.testnet`). No real money moves; the page shows a **TESTNET** banner.
+The Docker store also sells **Pro plan (testnet)**, $1 every 5 minutes, backed by the public testnet vault [`vault-v2.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault-v2.recurra-farzad.testnet) (plan 2, token `musdc.recurra-farzad.testnet` = mock USDC with a public faucet, merchant `merchant.recurra-farzad.testnet`). The subscribe page shows a **TESTNET** banner. You need the stack from the section above, the near CLI and Node ≥ 22.18.
 
-1. http://localhost:8080/shop → **Pro plan (testnet)** → Checkout (it must be alone in the cart; only "Pay with crypto" is offered) → Place order.
-2. The **subscribe page** explains the rule (the vault can only pay the merchant $1 per 5 min; cancel any time). Connect a testnet wallet (MyNearWallet, Meteor or Intear), choose how many periods to prepay (1/2/3/4/6/12) and sign **one** `ft_transfer_call`. The account needs mUSDC (test token).
-3. The server reads the subscription back from the chain (`get_subscription_by_ref`) and only then marks the order **Processing** — a tx hash from the browser is never trusted. You are redirected to the order-received page.
-4. Every period the charger calls `charge` (below); within a minute the store creates a **renewal order** (Processing, transaction id `recurra:sub<id>:<n>`) linked to the first order.
-5. Log in as the customer → **My Account → Subscriptions**: balance, next charge, **Top up** and **Cancel**. Cancel is signed by the customer's wallet; the contract refunds the remaining balance to the customer and the store marks the subscription *Cancelled*.
+**1. Create a testnet account** (free, funded by the testnet faucet service; the key is saved in `~/.near-credentials/testnet/`):
 
-Automated version on testnet (needs the near CLI keychain of the testnet customer and `charger/.env`, so it is for maintainers; ~3 min because plan 1 has a 60 s period):
+```sh
+near account create-account sponsor-by-faucet-service <you>.testnet autogenerate-new-keypair save-to-legacy-keychain network-config testnet create
+```
+
+→ `New account <you>.testnet created successfully.` To use it in a browser wallet, import the `private_key` from `~/.near-credentials/testnet/<you>.testnet.json` into a wallet that supports testnet (e.g. Meteor Wallet), or create a separate account directly in a testnet browser wallet (e.g. https://testnet.mynearwallet.com) — any account works for subscribing.
+
+**2. Get test mUSDC** — on the subscribe page (step 3) click **Get 100 test tokens (testnet faucet)**, or:
+
+```sh
+near contract call-function as-transaction musdc.recurra-farzad.testnet faucet json-args '{}' prepaid-gas '30.0 Tgas' attached-deposit '0 NEAR' sign-as <you>.testnet network-config testnet sign-with-legacy-keychain send
+```
+
+→ `ft_mint … "amount":"100000000","memo":"faucet"` (100 mUSDC; max 100 per call, one claim per account per hour).
+
+**3. Subscribe in Docker.** Log in at http://localhost:8080/wp-admin as `admin`/`admin` (or register a customer) so My Account works, then:
+
+1. http://localhost:8080/shop → **Pro plan (testnet)** → Checkout (alone in the cart; only "Pay with crypto" is offered) → Place order.
+2. The **subscribe page** states the rule: the vault can only pay the merchant $1 per 5 min; cancel any time. Connect your wallet (MyNearWallet, Meteor or Intear), pick 1/2/3/4/6/12 periods and sign **one** `ft_transfer_call`.
+3. The server reads the subscription back from the chain (`get_subscription_by_ref`) and only then marks the order **Processing** (a tx hash from the browser is never trusted) → order-received page. Charge #1 went to the merchant immediately.
+
+**4. Charge the next period — with any testnet account** (`charge` is permissionless; the contract only moves money per the rule). After 5 minutes either run the charger with your account:
+
+```sh
+cd charger && npm ci
+printf 'NEAR_NETWORK=testnet\nVAULT_ID=vault-v2.recurra-farzad.testnet\nCHARGER_ACCOUNT=<you>.testnet\nCHARGER_PRIVATE_KEY=<private_key from ~/.near-credentials/testnet/<you>.testnet.json>\n' > .env && chmod 600 .env
+npm run charge-once     # → "sub N: charged https://testnet.nearblocks.io/txns/…"  (or "nothing due" before the 5 minutes are up)
+```
+
+or call it directly (the subscription id is in the order notes and in My Account):
+
+```sh
+near contract call-function as-transaction vault-v2.recurra-farzad.testnet charge json-args '{"sub_id":N}' prepaid-gas '50.0 Tgas' attached-deposit '0 NEAR' sign-as <you>.testnet network-config testnet sign-with-legacy-keychain send
+```
+
+→ within a minute the store creates a **renewal order** (WooCommerce → Orders: Processing, $1.00, transaction id `recurra:sub<N>:2`, linked to the first order). Charging again before the period ends fails with `not due yet` — the contract, not the store, enforces the schedule.
+
+**5. Cancel → refund.** **My Account → Subscriptions** shows balance, next charge, charges, **Top up** and **Cancel**. Cancel is signed by your wallet; the contract refunds the remaining balance to you and the store marks the subscription *Cancelled*. Check your token balance:
+
+```sh
+near contract call-function as-read-only musdc.recurra-farzad.testnet ft_balance_of json-args '{"account_id":"<you>.testnet"}' network-config testnet now
+```
+
+### Be the merchant
+
+Create your own plan on the testnet vault and watch the charges arrive in **your** account.
+
+```sh
+# Your account must be registered on mUSDC to receive charges (claiming the faucet once does it).
+near contract call-function as-transaction vault-v2.recurra-farzad.testnet create_plan json-args '{"token":"musdc.recurra-farzad.testnet","amount":"1000000","period_sec":120,"name":"My plan"}' prepaid-gas '30.0 Tgas' attached-deposit '0.05 NEAR' sign-as <you>.testnet network-config testnet sign-with-legacy-keychain send
+near contract call-function as-read-only vault-v2.recurra-farzad.testnet get_plans json-args '{"merchant":"<you>.testnet"}' network-config testnet now
+```
+
+→ the returned plan id (the 0.05 NEAR prepays the vault storage for the plan and its subscriptions). Then in the Docker admin:
+
+1. WooCommerce → Settings → Payments → **Pay with crypto** → *Merchant NEAR account* = `<you>.testnet` → Save (mock mode accepts testnet accounts; the demo Pro plan product now belongs to a different merchant and is refused at checkout).
+2. Products → Add new: Simple, **Virtual**, Regular price **1.00** → tab **Recurra subscription** → *Vault plan* = your plan → Publish. The plugin checks the plan against the chain (merchant, active, price = plan amount) and refuses the link otherwise.
+3. Subscribe to it from a **second** account (steps 1–3 above), charge it (step 4) → each charge moves 1 mUSDC from the vault to `<you>.testnet` and creates a renewal order:
+
+```sh
+near contract call-function as-read-only musdc.recurra-farzad.testnet ft_balance_of json-args '{"account_id":"<you>.testnet"}' network-config testnet now
+```
+
+### Automated testnet run (maintainers)
+
+Needs the near CLI keychain of the testnet customer (`customer.recurra-farzad.testnet`); ~3 min because plan 1 has a 60 s period. Charge #2 runs the charger (`E2E_CHARGER_ENV` selects its env file, e.g. one for any judge account), charge #3 uses the near CLI one-liner signed by `E2E_CLI_CHARGER` (default: the customer).
 
 ```sh
 php docker/e2e-subscription.php
@@ -77,7 +137,7 @@ php docker/e2e-subscription.php
 
 ### Charger
 
-`charger/` (Node ≥ 22.18, runs TypeScript directly, `near-api-js` 7.4.0) calls `get_due` and `charge(sub_id)` every 60 s. `charge` is permissionless and the contract enforces every rule, so the charger signs with a **function-call key that can only call `charge` on the vault** — it cannot move funds anywhere else.
+`charger/` (Node ≥ 22.18, runs TypeScript directly, `near-api-js` 7.4.0) calls `get_due` and `charge(sub_id)` every 60 s. `charge` is permissionless and the contract enforces every rule, so any account works (step 4 above). For a long-running deployment, sign with a **function-call key that can only call `charge` on the vault** — it cannot move funds anywhere else. `CHARGER_ENV_FILE=.env.mainnet` selects another env file (all `.env*` files are git-ignored).
 
 ```sh
 cd charger && npm ci
@@ -159,6 +219,8 @@ cargo test --test integration    # sandbox integration tests (builds vault + moc
 
 → `test result: ok. 49 passed` (unit) and `test result: ok. 6 passed` (integration: `full_lifecycle`, `attack_wrong_token_and_forged_transfer`, `attack_merchant_cannot_raise_price`, `attack_failed_transfers_restore_state`, `merchant_cancel_refunds_owner`, `gas_reservation_and_low_gas_refusal`). The first run downloads the `near-sandbox` binary, so it needs network once; integration tests take ~1 min including the build.
 
+The test token has its own unit tests (faucet cap, per-account cooldown, testnet-only guard, owner-only mint): `cd contracts/mock-ft && cargo test --lib` → `test result: ok. 7 passed`.
+
 Each invariant from [docs/PLAN.md §3](docs/PLAN.md) has dedicated tests:
 
 | # | Invariant | Unit test(s) (`src/tests.rs`) | Integration test(s) |
@@ -176,7 +238,7 @@ Each invariant from [docs/PLAN.md §3](docs/PLAN.md) has dedicated tests:
 | Contract | Account |
 | --- | --- |
 | Recurra Vault (current) | [`vault-v2.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault-v2.recurra-farzad.testnet) — reproducible build, wasm sha256 `1ff5dc13b0e32e0f6e1bf3e0773cad3448798e8979590d399b0570779fcc9e6e` (commit `4d60119`) |
-| Mock USDC (6 decimals, test only) | [`musdc.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/musdc.recurra-farzad.testnet) |
+| Mock USDC (6 decimals, test only; public `faucet`: ≤ 100 mUSDC per call, 1 claim per account per hour) | [`musdc.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/musdc.recurra-farzad.testnet) — upgraded in place with the faucet ([A7eXDv…](https://testnet.nearblocks.io/txns/A7eXDvM9CHahr9ZQp9MZgFrRTHkgavtro8XepmYXmmZa)) |
 
 `vault.recurra-farzad.testnet` holds the earlier, non-reproducible build (before the in-flight/gas hardening) and is kept only for history.
 

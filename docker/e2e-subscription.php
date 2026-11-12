@@ -15,7 +15,9 @@
  *
  * Env: E2E_BASE (default http://localhost:8080), E2E_CUSTOMER (default
  * customer.recurra-farzad.testnet), E2E_PLAN_ID (default 1), E2E_PREPAY (periods,
- * default 5).
+ * default 5), E2E_CHARGER_ENV (charger env file for charge #2, default charger/.env),
+ * E2E_CLI_CHARGER (account that signs charge #3 with the near CLI one-liner,
+ * default: the customer — `charge` is permissionless).
  *
  * @package Recurra
  */
@@ -184,7 +186,7 @@ function near_call( string $signer, string $contract, string $method, array $arg
  * @param string $vault  Vault.
  * @param int    $sub_id Subscription id.
  */
-function charge_when_due( string $vault, int $sub_id ): void {
+function charge_when_due( string $vault, int $sub_id, string $via = 'charger' ): void {
 	global $root, $links;
 	$sub  = view( $vault, 'get_subscription', array( 'sub_id' => $sub_id ) );
 	$wait = (int) ceil( ( (int) substr( $sub['next_charge_at_ns'], 0, -9 ) - time() ) ) + 3;
@@ -192,8 +194,16 @@ function charge_when_due( string $vault, int $sub_id ): void {
 		say( "waiting {$wait}s for the next period" );
 		sleep( $wait );
 	}
+	if ( 'charger' !== $via ) {
+		// The README one-liner: anyone can call charge; the contract enforces the rule.
+		$tx      = near_call( $via, $vault, 'charge', array( 'sub_id' => $sub_id ), '0 NEAR', 50 );
+		$links[] = 'charge: https://testnet.nearblocks.io/txns/' . $tx;
+		say( "near CLI: {$via} called charge({$sub_id}) https://testnet.nearblocks.io/txns/{$tx}" );
+		return;
+	}
+	$env = getenv( 'E2E_CHARGER_ENV' ) ? 'CHARGER_ENV_FILE=' . escapeshellarg( (string) getenv( 'E2E_CHARGER_ENV' ) ) . ' ' : '';
 	for ( $i = 0; $i < 6; $i++ ) {
-		$out = (string) shell_exec( 'cd ' . escapeshellarg( $root . '/charger' ) . ' && node src/index.ts --once 2>&1' );
+		$out = (string) shell_exec( 'cd ' . escapeshellarg( $root . '/charger' ) . ' && ' . $env . 'node src/index.ts --once 2>&1' );
 		if ( preg_match( '/sub ' . $sub_id . ': charged (\S+)/', $out, $m ) ) {
 			$links[] = 'charge: ' . $m[1];
 			say( "charger: sub {$sub_id} charged {$m[1]}" );
@@ -371,8 +381,9 @@ in_array( $st['status'], array( 'processing', 'completed' ), true ) || fail( 'pa
 say( "order #{$order_id} {$st['status']} (tx id {$st['tx']}), subscription #{$st['sub_id']}" );
 
 // 5. Two renewals via the charger.
+$cli_charger = getenv( 'E2E_CLI_CHARGER' ) ? (string) getenv( 'E2E_CLI_CHARGER' ) : $customer;
 for ( $n = 2; $n <= 3; $n++ ) {
-	charge_when_due( $cfg['vault'], $st['sub_id'] );
+	charge_when_due( $cfg['vault'], $st['sub_id'], 2 === $n ? 'charger' : $cli_charger );
 	for ( $i = 0; $i < 10; $i++ ) {
 		$st = order_state( $order_id );
 		if ( count( $st['renewals'] ) >= $n - 1 ) {

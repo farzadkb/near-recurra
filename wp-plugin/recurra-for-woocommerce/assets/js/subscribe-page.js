@@ -211,6 +211,31 @@
 		} );
 		sel.addEventListener( 'change', renderTotal );
 		$( 'recurra-subscribe-form' ).addEventListener( 'submit', subscribe );
+		var faucet = $( 'recurra-faucet' );
+		if ( faucet ) {
+			// Testnet mock token only: public faucet (100 tokens, 1 h cooldown per account).
+			faucet.addEventListener( 'click', function () {
+				showError( '' );
+				status( t.working );
+				W.call( {
+					receiverId: cfg.token,
+					methodName: 'faucet',
+					args: {},
+					gas: '30000000000000',
+					deposit: '0',
+					callbackUrl: window.location.href
+				} ).then( function ( res ) {
+					status( '' );
+					if ( res && res.failed ) {
+						showError( t.faucetFailed );
+					}
+					renderTotal();
+				} ).catch( function ( e ) {
+					status( '' );
+					showError( e && e.message ? e.message : String( e ) );
+				} );
+			} );
+		}
 		$( 'recurra-disconnect' ).textContent = t.disconnect;
 		$( 'recurra-disconnect' ).addEventListener( 'click', function () {
 			W.signOut().then( renderAccount );

@@ -45,6 +45,9 @@ $recurra_testnet = 'testnet' === $config['network'];
 			<select id="recurra-periods" name="periods"></select>
 		</p>
 		<p><?php esc_html_e( 'Total now:', 'recurra' ); ?> <strong id="recurra-total"></strong> <small id="recurra-balance"></small></p>
+		<?php if ( $recurra_testnet ) : ?>
+			<p><button type="button" id="recurra-faucet" class="button"><?php esc_html_e( 'Get 100 test tokens (testnet faucet)', 'recurra' ); ?></button> <small><?php esc_html_e( 'Once per hour per account.', 'recurra' ); ?></small></p>
+		<?php endif; ?>
 		<p><small><?php esc_html_e( 'The first period is charged immediately; the rest stays in the vault under your control.', 'recurra' ); ?></small></p>
 		<p><button type="submit" class="button alt" id="recurra-subscribe-btn"><?php esc_html_e( 'Subscribe (one signature)', 'recurra' ); ?></button></p>
 	</form>
