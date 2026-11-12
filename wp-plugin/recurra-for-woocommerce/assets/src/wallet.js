@@ -69,6 +69,14 @@ export async function signOut() {
 }
 
 /**
+ * The FunctionCall action `call()` sends (exported for the bundle smoke test).
+ * Gas and deposit are base-unit strings; converted to BigInt, never floats.
+ */
+export function buildAction(methodName, args, gas, deposit) {
+	return actionCreators.functionCall(methodName, args, BigInt(gas), BigInt(deposit));
+}
+
+/**
  * Signs and sends one function call. Amounts are strings in base units
  * (yoctoNEAR / gas units) and converted to BigInt here — never floats.
  *
@@ -80,10 +88,7 @@ export async function signOut() {
  */
 export async function call({ receiverId, methodName, args, gas, deposit, callbackUrl }) {
 	const wallet = await selector.wallet();
-	const params = {
-		receiverId,
-		actions: [actionCreators.functionCall(methodName, args, BigInt(gas), BigInt(deposit))],
-	};
+	const params = { receiverId, actions: [buildAction(methodName, args, gas, deposit)] };
 	if (wallet.type === "browser" && callbackUrl) {
 		params.callbackUrl = callbackUrl;
 	}

@@ -175,7 +175,7 @@ cd wp-plugin/recurra-for-woocommerce && npm ci && npm run build
 npm run test:bundle   # loads the bundle in jsdom → "ok testnet: MyNearWallet, Meteor Wallet, Intear Wallet" and "ok mainnet: … HOT Wallet"
 ```
 
-Node-only globals are shimmed for the browser (`assets/src/shims/process.js`, `util.js`); asset URLs carry the file modification time, so browsers never keep a stale bundle.
+Node-only globals are shimmed for the browser (`assets/src/shims/node-globals.js` for `process`, `Buffer`, `setImmediate`; `util.js`); asset URLs carry the file modification time, so browsers never keep a stale bundle.
 
 ## Live proof on mainnet
 

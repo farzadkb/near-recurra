@@ -1,5 +1,16 @@
 Bundled license information:
 
+ieee754/index.js:
+  /*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
+
+buffer/index.js:
+  /*!
+   * The buffer module from node.js, for the browser.
+   *
+   * @author   Feross Aboukhadijeh <https://feross.org>
+   * @license  MIT
+   */
+
 mustache/mustache.js:
   /*!
    * mustache.js - Logic-less {{mustache}} templates with JavaScript
@@ -21,17 +32,6 @@ js-sha256/src/sha256.js:
    * @author Chen, Yi-Cyuan [emn178@gmail.com]
    * @copyright Chen, Yi-Cyuan 2014-2017
    * @license MIT
-   */
-
-ieee754/index.js:
-  /*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
-
-buffer/index.js:
-  /*!
-   * The buffer module from node.js, for the browser.
-   *
-   * @author   Feross Aboukhadijeh <https://feross.org>
-   * @license  MIT
    */
 
 safe-buffer/index.js:
