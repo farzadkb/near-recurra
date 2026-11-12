@@ -14,3 +14,10 @@
 .recurra-pay[data-status="FAILED"] .recurra-status { color: #b91c1c; }
 .recurra-error { color: #b91c1c; }
 .recurra-tx form { display: flex; gap: .5rem; margin-top: .5rem; }
+
+/* Subscriptions (subscribe page, My Account). */
+.recurra-wallets { display: flex; flex-wrap: wrap; gap: .5em; }
+.recurra-wallet-btn { display: inline-flex; align-items: center; gap: .4em; }
+.recurra-wallet-btn img { width: 20px; height: 20px; }
+.recurra-subs select { max-width: 9em; }
+.recurra-subs .button { margin: .15em 0; }

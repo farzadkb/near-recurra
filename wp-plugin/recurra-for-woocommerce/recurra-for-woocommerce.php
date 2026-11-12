@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:          Recurra for WooCommerce
- * Plugin URI:           https://github.com/OWNER/recurra
+ * Plugin URI:           https://github.com/farzadkb/near-recurra
  * Description:          Accept any token on any chain via NEAR Intents (1Click). The merchant receives the exact invoice amount in USDC on NEAR.
  * Version:              0.1.0
  * Requires at least:    6.5
@@ -52,6 +52,8 @@ add_action(
 		require_once RECURRA_DIR . 'includes/class-recurra-gateway.php';
 		require_once RECURRA_DIR . 'includes/class-rest.php';
 		require_once RECURRA_DIR . 'includes/class-poller.php';
+		require_once RECURRA_DIR . 'includes/class-near-rpc.php';
+		require_once RECURRA_DIR . 'includes/class-subscriptions.php';
 		require_once RECURRA_DIR . 'includes/class-recurra-plugin.php';
 		Recurra_Plugin::init();
 	}
@@ -62,6 +64,7 @@ register_deactivation_hook(
 	static function () {
 		if ( function_exists( 'as_unschedule_all_actions' ) ) {
 			as_unschedule_all_actions( 'recurra_poll' );
+			as_unschedule_all_actions( 'recurra_renewals' );
 		}
 	}
 );

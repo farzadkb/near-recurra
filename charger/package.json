@@ -1,0 +1,18 @@
+{
+  "name": "recurra-charger",
+  "private": true,
+  "description": "Calls charge(sub_id) on the Recurra Vault for every due subscription. Signs with a function-call key limited to `charge`.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "charge-once": "node src/index.ts --once",
+    "keygen": "node src/keygen.ts"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0"
+  }
+}

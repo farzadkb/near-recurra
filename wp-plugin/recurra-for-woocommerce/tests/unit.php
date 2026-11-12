@@ -114,6 +114,7 @@ require __DIR__ . '/../includes/class-recurra-amount.php';
 require __DIR__ . '/../includes/interface-recurra-oneclick.php';
 require __DIR__ . '/../includes/class-oneclick-mock.php';
 require __DIR__ . '/../includes/class-recurra-tokens.php';
+require __DIR__ . '/../includes/class-near-rpc.php';
 
 $failures = 0;
 $count    = 0;
@@ -196,6 +197,13 @@ eq( true, Recurra_Tokens::merchant_allowed_in_mode( 'live', 'mytestnet.near' ), 
 eq( true, Recurra_Tokens::merchant_allowed_in_mode( 'live', str_repeat( 'a1', 32 ) ), 'live accepts implicit' );
 eq( true, Recurra_Tokens::merchant_allowed_in_mode( 'mock', 'merchant.recurra-farzad.testnet' ), 'mock accepts .testnet' );
 eq( false, Recurra_Tokens::merchant_allowed_in_mode( '', 'shop.testnet' ), 'unknown mode treated as live' );
+
+// Vault network follows the account suffix; period_ns snapshot math.
+eq( 'testnet', Recurra_Near_Rpc::network_of( 'vault-v2.recurra-farzad.testnet' ), 'testnet vault' );
+eq( 'mainnet', Recurra_Near_Rpc::network_of( 'recurra-vault.near' ), 'mainnet vault' );
+eq( 'mainnet', Recurra_Near_Rpc::network_of( str_repeat( 'ab', 32 ) ), 'implicit account is mainnet' );
+eq( '300000000000', Recurra_Amount::shift( '300', 9 ), 'period 300 s in ns' );
+eq( '1700000000', Recurra_Amount::shift_down( '1700000000999999999', 9 ), 'ns to s (floor)' );
 
 // Token filtering (mock list): BSC/Tron minimums, memo chains, destination excluded.
 $mock    = new Recurra_OneClick_Mock();

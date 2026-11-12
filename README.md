@@ -47,7 +47,60 @@ docker compose -f docker/docker-compose.yml run --rm wpcli php /usr/local/bin/e2
 
 Reset everything: `docker compose -f docker/docker-compose.yml down -v`.
 
-Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `59 assertions, 0 failures`.
+Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `64 assertions, 0 failures`.
+
+## Subscriptions (Feature B) — testnet
+
+The Docker store also sells **Pro plan (testnet)**, $1 every 5 minutes, backed by the public testnet vault [`vault-v2.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault-v2.recurra-farzad.testnet) (plan 2, token `musdc.recurra-farzad.testnet`, merchant `merchant.recurra-farzad.testnet`). No real money moves; the page shows a **TESTNET** banner.
+
+1. http://localhost:8080/shop → **Pro plan (testnet)** → Checkout (it must be alone in the cart; only "Pay with crypto" is offered) → Place order.
+2. The **subscribe page** explains the rule (the vault can only pay the merchant $1 per 5 min; cancel any time). Connect a testnet wallet (MyNearWallet, Meteor or Intear), choose how many periods to prepay (1/3/6/12) and sign **one** `ft_transfer_call`. The account needs mUSDC (test token).
+3. The server reads the subscription back from the chain (`get_subscription_by_ref`) and only then marks the order **Processing** — a tx hash from the browser is never trusted. You are redirected to the order-received page.
+4. Every period the charger calls `charge` (below); within a minute the store creates a **renewal order** (Processing, transaction id `recurra:sub<id>:<n>`) linked to the first order.
+5. Log in as the customer → **My Account → Subscriptions**: balance, next charge, **Top up** and **Cancel**. Cancel is signed by the customer's wallet; the contract refunds the remaining balance to the customer and the store marks the subscription *Cancelled*.
+
+Automated version on testnet (needs the near CLI keychain of the testnet customer and `charger/.env`, so it is for maintainers; ~3 min because plan 1 has a 60 s period):
+
+```sh
+php docker/e2e-subscription.php
+```
+
+→ `E2E OK (testnet subscription): order #N paid → 2 renewal orders → cancelled → refund 2000000 in ~180s`, followed by the subscribe / charge / cancel tx links. A recorded run (2026-11-11, subscription #3, prepaid 5 × 1 mUSDC):
+
+| Step | Store | Tx |
+| --- | --- | --- |
+| subscribe (`ft_transfer_call`, charge #1) | order #18 → Processing | [2bGuJ8…](https://testnet.nearblocks.io/txns/2bGuJ8WGDGumGanr1AiYc8a5NXwQmUmyJH72oJXhFz2U) |
+| charger: charge #2 | renewal order #20 | [3BtZqs…](https://testnet.nearblocks.io/txns/3BtZqsREgwhrBjfkUebCswhJHfBKHXfHGm1M4Bi4q86e) |
+| charger: charge #3 | renewal order #21 | [2qR4Cn…](https://testnet.nearblocks.io/txns/2qR4CnDrX9sRudo88qnju4w9jM8NatuVys5Gtw37cavm) |
+| customer `cancel` | subscription *Cancelled*; 2 mUSDC refunded to the customer | [CVxGvQ…](https://testnet.nearblocks.io/txns/CVxGvQv7ReASttmSYSWMCEQY3brFR3bNnyZ4kCmiWGSr) |
+
+### Charger
+
+`charger/` (Node ≥ 22.18, runs TypeScript directly, `near-api-js` 7.4.0) calls `get_due` and `charge(sub_id)` every 60 s. `charge` is permissionless and the contract enforces every rule, so the charger signs with a **function-call key that can only call `charge` on the vault** — it cannot move funds anywhere else.
+
+```sh
+cd charger && npm ci
+node src/keygen.ts <charger-account> <vault-id> testnet   # writes .env (mode 600), prints only the public key + the add-key command
+# run the printed `near account add-key … grant-function-call-access … --function-names charge …` command
+npm run charge-once        # one pass → "sub N: charged https://testnet.nearblocks.io/txns/…" or "nothing due"
+npm start                  # loop
+```
+
+Or as a Docker service: `docker compose -f docker/docker-compose.yml --profile live up -d charger`.
+
+Testnet charger: `charger.recurra-farzad.testnet`, key `ed25519:HaUM9gfyZx7xtp7VScC4CmkfgkhYqAULoFmn99p9THGL` = *only `charge` on `vault-v2.recurra-farzad.testnet`, allowance 0.25 NEAR*:
+
+```sh
+near account list-keys charger.recurra-farzad.testnet network-config testnet now
+```
+
+### Rebuild the wallet bundle (optional)
+
+`assets/dist/recurra-wallet.js` is committed, so the plugin needs no build step. To rebuild it from `assets/src/wallet.js` (wallet-selector 10.1.4, esbuild 0.28.2):
+
+```sh
+cd wp-plugin/recurra-for-woocommerce && npm ci && npm run build
+```
 
 ## Live proof on mainnet
 

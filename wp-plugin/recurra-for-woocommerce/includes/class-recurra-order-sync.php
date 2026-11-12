@@ -51,7 +51,7 @@ final class Recurra_Order_Sync {
 	 * @param array<string, mixed> $resp     GetExecutionStatusResponse.
 	 */
 	public static function apply( int $order_id, array $resp ): void {
-		if ( ! self::lock( $order_id ) ) {
+		if ( ! self::lock( (string) $order_id ) ) {
 			return;
 			// Another request is applying a status right now.
 		}
@@ -63,7 +63,7 @@ final class Recurra_Order_Sync {
 			}
 			self::apply_locked( $order, $resp );
 		} finally {
-			self::unlock( $order_id );
+			self::unlock( (string) $order_id );
 		}
 	}
 
@@ -188,12 +188,12 @@ final class Recurra_Order_Sync {
 	}
 
 	/**
-	 * Acquires a per-order lock (atomic add_option). Stale locks expire after 60 s.
+	 * Acquires a named lock (atomic add_option). Stale locks expire after 60 s.
 	 *
-	 * @param int $order_id Order id.
+	 * @param string $name Lock name (e.g. an order id).
 	 */
-	private static function lock( int $order_id ): bool {
-		$key = 'recurra_lock_' . $order_id;
+	public static function lock( string $name ): bool {
+		$key = 'recurra_lock_' . $name;
 		if ( add_option( $key, time(), '', false ) ) {
 			return true;
 		}
@@ -206,11 +206,11 @@ final class Recurra_Order_Sync {
 	}
 
 	/**
-	 * Releases the lock.
+	 * Releases a lock.
 	 *
-	 * @param int $order_id Order id.
+	 * @param string $name Lock name.
 	 */
-	private static function unlock( int $order_id ): void {
-		delete_option( 'recurra_lock_' . $order_id );
+	public static function unlock( string $name ): void {
+		delete_option( 'recurra_lock_' . $name );
 	}
 }

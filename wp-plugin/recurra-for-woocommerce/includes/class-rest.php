@@ -100,6 +100,54 @@ final class Recurra_REST {
 				),
 			)
 		);
+		register_rest_route(
+			self::NS,
+			$base . '/subscription',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'subscription_confirm' ),
+				'permission_callback' => array( __CLASS__, 'can_access' ),
+				'args'                => $args + array(
+					'tx_hash' => array(
+						'type'              => 'string',
+						'required'          => false,
+						'sanitize_callback' => 'sanitize_text_field',
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NS,
+			$base . '/subscription/balance',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( __CLASS__, 'subscription_balance' ),
+				'permission_callback' => array( __CLASS__, 'can_access' ),
+				'args'                => $args + array(
+					'account' => array(
+						'type'              => 'string',
+						'required'          => true,
+						'sanitize_callback' => 'sanitize_text_field',
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NS,
+			'/subscriptions/(?P<order_id>\d+)/sync',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'subscription_sync' ),
+				'permission_callback' => array( __CLASS__, 'owns_subscription' ),
+				'args'                => array(
+					'order_id' => array(
+						'type'              => 'integer',
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+				),
+			)
+		);
 	}
 
 	/**
@@ -145,6 +193,9 @@ final class Recurra_REST {
 	 */
 	public static function quote( WP_REST_Request $request ) {
 		$order = wc_get_order( (int) $request['id'] );
+		if ( Recurra_Subscriptions::is_subscription_order( $order ) ) {
+			return self::error( 'recurra_subscription', __( 'Subscriptions are paid from a NEAR wallet on the subscribe page.', 'recurra' ), 409 );
+		}
 		if ( ! $order->has_status( array( 'pending', 'failed' ) ) ) {
 			return self::error( 'recurra_not_payable', __( 'This order does not need payment.', 'recurra' ), 409 );
 		}
@@ -433,5 +484,84 @@ final class Recurra_REST {
 		$data   = $e->get_error_data();
 		$status = is_array( $data ) && isset( $data['status'] ) && (int) $data['status'] < 500 ? 400 : 502;
 		return new WP_Error( $e->get_error_code(), sanitize_text_field( $e->get_error_message() ), array( 'status' => $status ) );
+	}
+
+	/**
+	 * Logged-in customer who owns the subscription order (cookie auth + X-WP-Nonce).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return true|WP_Error
+	 */
+	public static function owns_subscription( WP_REST_Request $request ) {
+		$order = wc_get_order( (int) $request['order_id'] );
+		$user  = get_current_user_id();
+		if ( ! $user || ! $order || $order->get_customer_id() !== $user || ! Recurra_Subscriptions::is_subscription_order( $order ) ) {
+			return new WP_Error( 'recurra_not_found', __( 'Subscription not found.', 'recurra' ), array( 'status' => 404 ) );
+		}
+		return true;
+	}
+
+	/**
+	 * POST: confirm a subscription order from chain state. The tx hash is only recorded,
+	 * never trusted.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 */
+	public static function subscription_confirm( WP_REST_Request $request ) {
+		$order = wc_get_order( (int) $request['id'] );
+		if ( ! Recurra_Subscriptions::is_subscription_order( $order ) ) {
+			return self::error( 'recurra_not_subscription', __( 'This order is not a subscription.', 'recurra' ), 409 );
+		}
+		$tx = (string) $request['tx_hash'];
+		if ( '' !== $tx && 1 === preg_match( '/^[1-9A-HJ-NP-Za-km-z]{43,44}$/', $tx ) && $tx !== (string) $order->get_meta( '_recurra_sub_tx' ) && ! $order->is_paid() ) {
+			$order->update_meta_data( '_recurra_sub_tx', $tx );
+			/* translators: %s: transaction hash. */
+			$order->add_order_note( sprintf( __( 'Recurra: customer reports subscribe transaction %s (verifying on-chain).', 'recurra' ), $tx ) );
+			$order->save();
+		}
+		$state = Recurra_Subscriptions::confirm( $order );
+		if ( 'error' === $state ) {
+			return self::error( 'recurra_rpc', __( 'NEAR RPC is unavailable. Retrying…', 'recurra' ), 502 );
+		}
+		$order = wc_get_order( $order->get_id() );
+		return rest_ensure_response(
+			array(
+				'state'    => $state,
+				'redirect' => 'paid' === $state ? $order->get_checkout_order_received_url() : null,
+			)
+		);
+	}
+
+	/**
+	 * GET: the customer's token balance (so the page can warn before signing).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 */
+	public static function subscription_balance( WP_REST_Request $request ) {
+		$order   = wc_get_order( (int) $request['id'] );
+		$account = strtolower( trim( (string) $request['account'] ) );
+		if ( ! Recurra_Subscriptions::is_subscription_order( $order ) || ! Recurra_Tokens::is_valid_near_account( $account ) ) {
+			return self::error( 'recurra_bad_account', __( 'Invalid account.', 'recurra' ), 400 );
+		}
+		$plan    = Recurra_Subscriptions::order_plan( $order );
+		$balance = Recurra_Subscriptions::rpc()->view( (string) $plan['token'], 'ft_balance_of', array( 'account_id' => $account ), 5 );
+		if ( is_wp_error( $balance ) ) {
+			return self::error( 'recurra_rpc', __( 'NEAR RPC is unavailable.', 'recurra' ), 502 );
+		}
+		return rest_ensure_response( array( 'balance' => Recurra_Amount::is_uint( $balance ) ? $balance : '0' ) );
+	}
+
+	/**
+	 * POST: re-read a subscription from chain after a cancel / top-up in the wallet.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 */
+	public static function subscription_sync( WP_REST_Request $request ) {
+		$order = wc_get_order( (int) $request['order_id'] );
+		$sub   = Recurra_Subscriptions::sync( $order );
+		if ( is_wp_error( $sub ) && 'recurra_busy' !== $sub->get_error_code() ) {
+			return self::error( $sub->get_error_code(), $sub->get_error_message(), 502 );
+		}
+		return rest_ensure_response( Recurra_Subscriptions::row( wc_get_order( $order->get_id() ) ) );
 	}
 }

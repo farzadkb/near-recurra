@@ -17,7 +17,8 @@ final class Recurra_Plugin {
 	/**
 	 * Native USDC on NEAR (Circle). Verified against /v0/tokens on settings save.
 	 */
-	const USDC_NEAR = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+	const USDC_CONTRACT = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+	const USDC_NEAR     = 'nep141:' . self::USDC_CONTRACT;
 
 	/**
 	 * Registers hooks.
@@ -30,6 +31,7 @@ final class Recurra_Plugin {
 		add_action( 'admin_notices', array( __CLASS__, 'admin_notices' ) );
 		Recurra_REST::init();
 		Recurra_Poller::init();
+		Recurra_Subscriptions::init();
 	}
 
 	/**
@@ -50,7 +52,7 @@ final class Recurra_Plugin {
 			'quote_ttl_min'     => '30',
 			'mode'              => 'live',
 			'vault_contract'    => '',
-			'rpc_url'           => 'https://rpc.mainnet.near.org',
+			'rpc_url'           => '',
 		);
 	}
 
@@ -178,7 +180,7 @@ final class Recurra_Plugin {
 		global $wp;
 		$order_id = isset( $wp->query_vars['order-pay'] ) ? absint( $wp->query_vars['order-pay'] ) : 0;
 		$order    = $order_id ? wc_get_order( $order_id ) : false;
-		if ( ! $order || self::GATEWAY_ID !== $order->get_payment_method() ) {
+		if ( ! $order || self::GATEWAY_ID !== $order->get_payment_method() || Recurra_Subscriptions::is_subscription_order( $order ) ) {
 			return;
 		}
 		wp_enqueue_style( 'recurra-pay', RECURRA_URL . 'assets/css/pay-page.css', array(), RECURRA_VERSION );

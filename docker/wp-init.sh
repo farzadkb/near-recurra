@@ -1,11 +1,16 @@
 #!/bin/sh
 # Idempotent demo-store setup, run by the `wpcli` compose service.
-# WooCommerce + Recurra (MOCK mode), USD, guest checkout, demo products.
+# WooCommerce + Recurra (MOCK checkout), USD, guest checkout, demo products,
+# and a subscription product backed by the public TESTNET vault.
 set -eu
 
 WP_URL="${WP_URL:-http://localhost:8080}"
 WC_VERSION="11.2.2"
-MERCHANT="${RECURRA_MERCHANT:-demo-merchant.near}"
+# Testnet merchant that owns the demo plans on the testnet vault. Mock checkout
+# accepts any account; live mode would refuse a .testnet merchant.
+MERCHANT="${RECURRA_MERCHANT:-merchant.recurra-farzad.testnet}"
+VAULT="${RECURRA_VAULT:-vault-v2.recurra-farzad.testnet}"
+export PLAN_ID="${RECURRA_PLAN_ID:-2}"
 cd /var/www/html
 export WP_CLI_CACHE_DIR=/tmp/wp-cli-cache
 
@@ -55,9 +60,9 @@ if [ "$(wp wc shipping_zone_method list 0 --user=admin --format=count)" = "0" ];
 	wp wc shipping_zone_method create 0 --method_id=free_shipping --enabled=true --user=admin --quiet
 fi
 
-# Recurra gateway: enabled, MOCK mode (no funds, no network).
+# Recurra gateway: enabled, MOCK checkout (no funds); subscriptions on testnet.
 opt woocommerce_recurra_settings "$(cat <<JSON
-{"enabled":"yes","title":"Pay with crypto (any chain)","description":"Pay with USDC, ETH, SOL, BTC, NEAR and more via NEAR Intents.","mode":"mock","merchant_account":"$MERCHANT","destination_asset":"nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1","api_key":"","allowed_chains":"arb,base,eth,sol,op,pol,near,btc","slippage_bps":"100","quote_ttl_min":"30","vault_contract":"","rpc_url":"https://rpc.mainnet.near.org"}
+{"enabled":"yes","title":"Pay with crypto (any chain)","description":"Pay with USDC, ETH, SOL, BTC, NEAR and more via NEAR Intents.","mode":"mock","merchant_account":"$MERCHANT","destination_asset":"nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1","api_key":"","allowed_chains":"arb,base,eth,sol,op,pol,near,btc","slippage_bps":"100","quote_ttl_min":"30","vault_contract":"$VAULT","rpc_url":""}
 JSON
 )" --format=json
 
@@ -69,5 +74,19 @@ create_product() { # sku name price virtual
 }
 create_product coffee-beans "Coffee beans" 3 false
 create_product sticker-pack "Digital sticker pack" 2 true
+create_product pro-plan "Pro plan (testnet)" 1 true
 
-echo "[recurra] ready: $WP_URL (admin/admin) — Recurra in MOCK mode"
+# Link the Pro plan product to the vault plan (checked against the chain; needs network).
+wp eval '
+$id = wc_get_product_id_by_sku( "pro-plan" );
+$p  = wc_get_product( $id );
+$problem = Recurra_Subscriptions::plan_problem( Recurra_Subscriptions::plan( (int) getenv( "PLAN_ID" ), 0 ), (string) $p->get_regular_price() );
+if ( null !== $problem ) { fwrite( STDERR, "[recurra] WARNING: Pro plan not linked: $problem\n" ); return; }
+$p->update_meta_data( Recurra_Subscriptions::META_PLAN, (int) getenv( "PLAN_ID" ) );
+$p->set_virtual( true );
+$p->set_sold_individually( true );
+$p->save();
+echo "[recurra] Pro plan linked to vault plan " . getenv( "PLAN_ID" ) . "\n";
+'
+
+echo "[recurra] ready: $WP_URL (admin/admin) — checkout in MOCK mode, subscriptions on testnet ($VAULT)"

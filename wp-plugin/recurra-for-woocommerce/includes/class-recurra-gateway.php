@@ -110,13 +110,14 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 			'vault_contract'    => array(
 				'title'       => __( 'Vault contract', 'recurra' ),
 				'type'        => 'text',
-				'description' => __( 'Recurra Vault account for subscriptions.', 'recurra' ),
+				'description' => __( 'Recurra Vault account for subscriptions. A .testnet vault puts subscriptions on testnet (wallets, RPC and explorer links follow it); checkout payments are unaffected.', 'recurra' ),
 				'default'     => '',
 			),
 			'rpc_url'           => array(
-				'title'   => __( 'NEAR RPC URL', 'recurra' ),
-				'type'    => 'text',
-				'default' => $d['rpc_url'],
+				'title'       => __( 'NEAR RPC URL', 'recurra' ),
+				'type'        => 'text',
+				'description' => __( 'Leave empty for FastNEAR on the vault\'s network. Must be on the same network as the vault.', 'recurra' ),
+				'default'     => $d['rpc_url'],
 			),
 		);
 	}
@@ -139,6 +140,10 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 		if ( $ttl < 5 || $ttl > 240 ) {
 			WC_Admin_Settings::add_error( __( 'Recurra: quote lifetime must be 5–240 minutes.', 'recurra' ) );
 		}
+		$vault = trim( (string) $s['vault_contract'] );
+		if ( '' !== $vault ) {
+			$this->validate_vault( $vault, (string) $s['merchant_account'] );
+		}
 		if ( 'live' === $s['mode'] ) {
 			delete_transient( 'recurra_tokens_live' );
 			$tokens = Recurra_Tokens::all( Recurra_Plugin::client( 'live' ) );
@@ -149,6 +154,39 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 			}
 		}
 		return $saved;
+	}
+
+	/**
+	 * Checks the vault: valid account, RPC on the vault's network, contract answers.
+	 *
+	 * @param string $vault    Vault account.
+	 * @param string $merchant Merchant account.
+	 */
+	private function validate_vault( string $vault, string $merchant ): void {
+		if ( ! Recurra_Tokens::is_valid_near_account( $vault ) ) {
+			WC_Admin_Settings::add_error( __( 'Recurra: vault contract is not a valid NEAR account id.', 'recurra' ) );
+			return;
+		}
+		$network = Recurra_Near_Rpc::network_of( $vault );
+		if ( '' !== $merchant && Recurra_Near_Rpc::network_of( $merchant ) !== $network ) {
+			/* translators: %s: network name. */
+			WC_Admin_Settings::add_error( sprintf( __( 'Recurra: the vault is on %s but the merchant account is not; subscription plans are looked up for the merchant account on the vault\'s network.', 'recurra' ), $network ) );
+		}
+		$rpc   = Recurra_Subscriptions::rpc();
+		$chain = $rpc->chain_id();
+		if ( is_wp_error( $chain ) ) {
+			WC_Admin_Settings::add_error( __( 'Recurra: NEAR RPC unreachable: ', 'recurra' ) . $chain->get_error_message() );
+			return;
+		}
+		if ( $chain !== $network ) {
+			/* translators: 1: RPC chain id, 2: vault network. */
+			WC_Admin_Settings::add_error( sprintf( __( 'Recurra: the NEAR RPC URL is on %1$s but the vault is on %2$s. Clear the RPC URL to use the default.', 'recurra' ), $chain, $network ) );
+			return;
+		}
+		$owner = $rpc->view( $vault, 'get_owner' );
+		if ( is_wp_error( $owner ) || ! is_string( $owner ) ) {
+			WC_Admin_Settings::add_error( __( 'Recurra: the vault contract did not answer get_owner. Is it deployed and initialized?', 'recurra' ) );
+		}
 	}
 
 	/**
@@ -221,6 +259,9 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 			return false;
 		}
 		$merchant = trim( (string) $this->get_option( 'merchant_account' ) );
+		if ( Recurra_Subscriptions::cart_has_subscription() && '' === Recurra_Subscriptions::vault() ) {
+			return false;
+		}
 		return '' !== $merchant && Recurra_Tokens::merchant_allowed_in_mode( (string) $this->get_option( 'mode' ), $merchant );
 	}
 
@@ -236,6 +277,11 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 			return array( 'result' => 'failure' );
 		}
 		$order->update_meta_data( '_recurra_mode', Recurra_Plugin::settings()['mode'] );
+		$subscription = Recurra_Subscriptions::prepare_order( $order );
+		if ( is_wp_error( $subscription ) ) {
+			wc_add_notice( $subscription->get_error_message(), 'error' );
+			return array( 'result' => 'failure' );
+		}
 		if ( ! $order->has_status( 'pending' ) ) {
 			$order->set_status( 'pending' );
 		}
@@ -254,6 +300,18 @@ class Recurra_Gateway extends WC_Payment_Gateway {
 	public function receipt_page( $order_id ) {
 		$order = wc_get_order( $order_id );
 		if ( ! $order ) {
+			return;
+		}
+		if ( Recurra_Subscriptions::is_subscription_order( $order ) ) {
+			wc_get_template(
+				'subscribe-page.php',
+				array(
+					'order'  => $order,
+					'config' => Recurra_Subscriptions::subscribe_page_config( $order ),
+				),
+				'',
+				RECURRA_DIR . 'templates/'
+			);
 			return;
 		}
 		$config = Recurra_Plugin::pay_page_config( $order );
