@@ -24,7 +24,7 @@ final class Recurra_Subscriptions {
 	const RENEW_HOOK     = 'recurra_renewals';
 	const RENEW_INTERVAL = 60;
 	const ENDPOINT       = 'recurra-subscriptions';
-	const PERIODS        = array( 1, 3, 6, 12 );
+	const PERIODS        = array( 1, 2, 3, 4, 6, 12 );
 	const SUBSCRIBE_GAS  = '100000000000000';
 	const CANCEL_GAS     = '50000000000000';
 	const REWRITE_VER    = '1';

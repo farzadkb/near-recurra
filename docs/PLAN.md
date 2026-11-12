@@ -355,7 +355,7 @@ Own minimal model — **no dependency on WooCommerce Subscriptions**.
 ### Customer side (subscribe page, replaces pay page for subscription orders)
 
 1. "Connect NEAR wallet" (wallet-selector: MyNearWallet, Meteor, HOT/HERE, Intear — whatever installs cleanly).
-2. Choose prepay periods (1/3/6/12) → shows total = amount × n.
+2. Choose prepay periods (1/2/3/4/6/12) → shows total = amount × n.
 3. Sign one tx: `ft_transfer_call` on USDC contract, `receiver_id = vault`, `amount = total`, `msg = {"subscribe":{"plan_id":…,"owner":<connected account>,"external_ref":"wc:<site>:<order_id>","charge_now":true}}`, 1 yocto, 100 TGas.
    - Before that, if vault not registered for the user… not needed (vault is the receiver; customer is already a USDC holder).
 4. JS posts tx hash to `POST /recurra/v1/orders/{id}/subscription` → server confirms via RPC view `get_subscription_by_ref(merchant, external_ref)` (do not trust tx hash alone) → marks order paid (first period), stores `_recurra_sub_id`.

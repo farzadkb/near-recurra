@@ -9,6 +9,7 @@
  *
  *   node src/index.ts          # loop
  *   node src/index.ts --once   # one pass, then exit (demo / cron)
+ *   CHARGER_ENV_FILE=.env.mainnet node src/index.ts --once
  */
 import { readFileSync } from "node:fs";
 import { Account, JsonRpcProvider, getTransactionLastResult } from "near-api-js";
@@ -40,7 +41,8 @@ function required(env: Env, key: string): string {
 	return v;
 }
 
-loadDotEnv(new URL("../.env", import.meta.url).pathname);
+// CHARGER_ENV_FILE selects another file, e.g. .env.mainnet (all .env.* files are git-ignored).
+loadDotEnv(process.env.CHARGER_ENV_FILE || new URL("../.env", import.meta.url).pathname);
 const env = process.env;
 const NETWORK = env.NEAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
 const RPC_URL = env.RPC_URL || (NETWORK === "mainnet" ? "https://rpc.mainnet.fastnear.com" : "https://rpc.testnet.fastnear.com");
