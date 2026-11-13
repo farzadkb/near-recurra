@@ -13,7 +13,6 @@ set -euo pipefail
 exec python3 -I - "$(cd "$(dirname "$0")" && pwd)" "$@" <<'PY'
 import base64, json, os, sys, time, urllib.request
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 HERE = sys.argv[1]
 ARGS = sys.argv[2:]
@@ -26,7 +25,6 @@ CUSTOMER_EVM = os.environ.get("CUSTOMER_EVM", "0x39Fb3fe39fc1e0cEBBcd201c583605b
 NEAR_RPC = os.environ.get("NEAR_RPC", "https://rpc.mainnet.fastnear.com")
 BASE_RPC = os.environ.get("BASE_RPC", "https://mainnet.base.org")
 SNAPSHOT = os.path.join(HERE, ".balances-snapshot.json")
-TEHRAN = ZoneInfo("Asia/Tehran")
 WIDTH = 78
 
 COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -114,8 +112,7 @@ def short(acct, n=28):
 
 
 def when(ts):
-    u = datetime.fromtimestamp(ts, timezone.utc)
-    return u.strftime("%Y-%m-%d %H:%M:%S UTC"), u.astimezone(TEHRAN).strftime("%H:%M:%S Tehran")
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def until(ts):
@@ -154,13 +151,11 @@ ROWS = [
 def render(baseline):
     now = time.time()
     values = {}
-    u, t = when(now)
+    u = when(now)
     line = "─" * WIDTH
-    out = [bold("Recurra balances · mainnet · USDC") + " " * (WIDTH - 33 - len(u)) + u,
-           " " * (WIDTH - len(t)) + dim(t)]
+    out = [bold("Recurra balances · mainnet · USDC") + " " * (WIDTH - 33 - len(u)) + u]
     if baseline:
-        bu, bt = when(baseline["at"])
-        note = f"change since {bu[11:]} ({bt})"
+        note = f"change since {when(baseline['at'])[11:]}"
         out.append(" " * (WIDTH - len(note)) + dim(note))
     out.append(line)
     out.append(dim(f"{'':<10} {'Account':<28} {'Chain':<5} {'Balance':>14} {'Change':>16}"))
@@ -200,8 +195,7 @@ def render(baseline):
                        f"   {fmt(s['amount'])} per {int(s['period_ns']) // 10**9}s")
             if st != "Cancelled":
                 ts = int(s["next_charge_at_ns"]) // 10**9
-                nu, nt = when(ts)
-                out.append(f"  next charge  {nu} · {nt} ({until(ts)})")
+                out.append(f"  next charge  {when(ts)} ({until(ts)})")
             if s.get("in_flight"):
                 out.append(f"  {red('charge #' + str(s['in_flight']['charge_number']) + ' in flight')}")
             out.append(f"  owner {s['owner']}  →  merchant {s['merchant']}")
