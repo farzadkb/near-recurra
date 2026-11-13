@@ -11,7 +11,7 @@
 # scripts/.balances-snapshot.json (git-ignored).
 set -euo pipefail
 exec python3 -I - "$(cd "$(dirname "$0")" && pwd)" "$@" <<'PY'
-import base64, json, os, sys, time, urllib.request
+import base64, json, os, socket, sys, time, urllib.request
 from datetime import datetime, timezone
 
 HERE = sys.argv[1]
@@ -63,14 +63,29 @@ while i < len(ARGS):
     i += 1
 
 
-def post(url, body):
-    req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json", "User-Agent": "recurra-balances"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        out = json.load(r)
-    if "error" in out:
-        raise RuntimeError(str(out["error"])[:120])
-    return out["result"]
+# IPv4 only: hosts without an IPv6 route (e.g. WSL) otherwise report a misleading
+# "Network is unreachable" from the IPv6 fallback when an IPv4 attempt hiccups.
+_orig_getaddrinfo = socket.getaddrinfo
+socket.getaddrinfo = lambda host, *a, **k: [r for r in _orig_getaddrinfo(host, *a, **k) if r[0] == socket.AF_INET] or _orig_getaddrinfo(host, *a, **k)
+
+
+def post(url, body, attempts=3):
+    """JSON-RPC POST with retries (0.5 s, 1.5 s backoff) for transient network errors."""
+    last = None
+    for n in range(attempts):
+        try:
+            req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json", "User-Agent": "recurra-balances"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                out = json.load(r)
+            if "error" in out:
+                raise RuntimeError(str(out["error"])[:120])
+            return out["result"]
+        except (OSError, ValueError) as e:  # network / HTTP / bad JSON: retry
+            last = e
+            if n + 1 < attempts:
+                time.sleep(0.5 + n)
+    raise RuntimeError(str(getattr(last, "reason", last))[:120])
 
 
 def near_view(contract, method, args):
@@ -148,9 +163,13 @@ ROWS = [
 ]
 
 
+LAST_GOOD = {}
+
+
 def render(baseline):
     now = time.time()
     values = {}
+    problems = []
     u = when(now)
     line = "─" * WIDTH
     out = [bold("Recurra balances · mainnet · USDC") + " " * (WIDTH - 33 - len(u)) + u]
@@ -162,19 +181,27 @@ def render(baseline):
     for key, label, acct, chain, fn in ROWS:
         if key == "total_held":
             out.append(dim("·" * WIDTH))
+        stale = False
         try:
             v = str(int(fn() or 0))
+            LAST_GOOD[key] = v
+        except Exception as e:  # noqa: BLE001 — show the row, keep going
+            problems.append(f"{short(acct, 28)}: {e}")
+            v = LAST_GOOD.get(key)
+            stale = v is not None
+        if v is None:
+            bal, ch = "n/a", red(f"{'rpc error':>16}")
+        else:
             values[key] = v
             bal = fmt(v)
             prev = (baseline or {}).get("values", {}).get(key)
-            if prev is None:
+            if stale:
+                ch = red(f"{'stale (rpc)':>16}")
+            elif prev is None:
                 ch = ""
             else:
                 d = int(v) - int(prev)
                 ch = green(f"{fmt(d, True):>16}") if d > 0 else red(f"{fmt(d, True):>16}") if d < 0 else dim(f"{'·':>16}")
-        except Exception as e:  # noqa: BLE001 — show the row, keep going
-            bal, ch = "n/a", red(f"{'rpc error':>16}")
-            print(dim(f"  ({acct}: {e})"), file=sys.stderr)
         out.append(f"{label:<10} {short(acct, 28):<28} {chain:<5} {bal:>14} {ch}")
     if sub_id is not None:
         out.append(line)
@@ -200,6 +227,8 @@ def render(baseline):
                 out.append(f"  {red('charge #' + str(s['in_flight']['charge_number']) + ' in flight')}")
             out.append(f"  owner {s['owner']}  →  merchant {s['merchant']}")
     out.append(line)
+    for p in problems:
+        out.append(dim(f"rpc: {p}"[:WIDTH]))
     return "\n".join(out), values
 
 
