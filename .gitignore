@@ -28,3 +28,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# scripts/balances.sh snapshot
+scripts/.balances-snapshot.json
+scripts/.balances-snapshot.json.tmp

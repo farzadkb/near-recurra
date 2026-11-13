@@ -166,6 +166,16 @@ Testnet charger: `charger.recurra-farzad.testnet`, key `ed25519:HaUM9gfyZx7xtp7V
 near account list-keys charger.recurra-farzad.testnet network-config testnet now
 ```
 
+### Background jobs
+
+The plugin's backup payment poller and subscription renewals run as Action Scheduler jobs (group `recurra`, every 60 s). In Docker the `cron` service runs them every 30 s, so renewal orders appear without page visits or manual steps (`docker compose -f docker/docker-compose.yml ps cron` → `running`). On a local site where WP-Cron only fires on page visits:
+
+```sh
+scripts/run-jobs.sh /var/www/html/near        # runs `wp cron event run --due-now` + `wp action-scheduler run --group=recurra` every 60 s
+```
+
+→ `… recurra jobs ran` once per minute. As root it runs WP-CLI as the owner of `wp-content` (e.g. `www-data`), so job-created files stay writable by PHP.
+
 ### Rebuild the wallet bundle (optional)
 
 `assets/dist/recurra-wallet.js` is committed, so the plugin needs no build step. To rebuild it from `assets/src/wallet.js` (wallet-selector 10.1.4, esbuild 0.28.2):
@@ -176,6 +186,55 @@ npm run test:bundle   # loads the bundle in jsdom → "ok testnet: MyNearWallet,
 ```
 
 Node-only globals are shimmed for the browser (`assets/src/shims/node-globals.js` for `process`, `Buffer`, `setImmediate`; `util.js`); asset URLs carry the file modification time, so browsers never keep a stale bundle.
+
+## Running in production
+
+**1. Real cron instead of WP-Cron.** In `wp-config.php`:
+
+```php
+define( 'DISABLE_WP_CRON', true );
+```
+
+then, in the web server user's crontab (`sudo crontab -u www-data -e`):
+
+```
+* * * * * cd /var/www/example.com && /usr/local/bin/wp cron event run --due-now --quiet && /usr/local/bin/wp action-scheduler run --group=recurra --quiet
+```
+
+`wp cron event run` also drives WooCommerce's own Action Scheduler queue; the second command makes sure Recurra's jobs run every minute even when that queue is busy. Check: WooCommerce → Status → Scheduled Actions → group `recurra` shows completed `recurra_poll` / `recurra_renewals` actions every minute.
+
+**2. Charger as a systemd service** (function-call key limited to `charge`, see [Charger](#charger)). As root:
+
+```sh
+useradd --system --home /opt/recurra --shell /usr/sbin/nologin recurra
+git clone <repo> /opt/recurra/app && cd /opt/recurra/app/charger && npm ci --omit=dev
+install -m 600 -o recurra -g recurra /path/to/.env.mainnet /opt/recurra/app/charger/.env.mainnet
+cat > /etc/systemd/system/recurra-charger.service <<'UNIT'
+[Unit]
+Description=Recurra charger (calls charge() on the vault for due subscriptions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=recurra
+WorkingDirectory=/opt/recurra/app/charger
+Environment=CHARGER_ENV_FILE=/opt/recurra/app/charger/.env.mainnet
+ExecStart=/usr/bin/node src/index.ts
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload && systemctl enable --now recurra-charger
+journalctl -u recurra-charger -f
+```
+
+→ `charger recurra-shop.near → recurra-vault.near on mainnet …` then `nothing due` / `sub N: charged https://nearblocks.io/txns/…` every minute. Use `command -v node` if Node ≥ 22.18 is not at `/usr/bin/node`. The key file is readable only by the `recurra` user; the key can only call `charge`, and its NEAR allowance caps what it can spend on gas.
 
 ## Live proof on mainnet
 
@@ -202,6 +261,8 @@ near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398e
 | deploy + `new(owner = recurra-vault.near)` | `recurra-vault.near` | [71dKyT…](https://nearblocks.io/txns/71dKyTKDsvDAz8V1YPEk2RxYNjninvwW73B9oUsW5hPK) |
 | `storage_deposit` on USDC for the vault | `recurra-vault.near` | [FWtUY1…](https://nearblocks.io/txns/FWtUY1uvne77ikmLaXUf4vJFdc3zcgStBuXDsGLF5v6N) |
 | `create_plan` → plan 1 "Demo plan", 1 USDC / 300 s | `recurra-shop.near` | [9DD3MN…](https://nearblocks.io/txns/9DD3MNm5x18GY6pTMX2nxNA2GpamDiTQPs5CfeoMrff) |
+
+Demo view (read-only, public RPCs, no keys): `scripts/balances.sh [sub_id] [--watch N] [--reset]` prints the USDC balances of the vault, merchant and customer (NEAR and Base), the vault's `total_held`, optional subscription details, and the change since the previous run.
 
 Verify (read-only):
 
