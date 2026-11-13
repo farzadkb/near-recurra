@@ -1,0 +1,90 @@
+# Public hosted demo on a VPS: adds Caddy (automatic HTTPS) in front of the
+# store. Use it through docker/vps.sh, which passes the secrets env file:
+#   docker/vps.sh init && docker/vps.sh up
+# Only Caddy publishes ports (80/443). WordPress, MariaDB, the cron runner and
+# the charger stay on the internal compose network.
+#
+# Variables come from /opt/recurra/secrets/stack.env (see docker/vps.sh):
+#   RECURRA_DOMAIN, RECURRA_DB_PASSWORD, RECURRA_PROFILE, RECURRA_JUDGE_PASSWORD
+# and CHARGER_ENV_HOST (set by docker/vps.sh from the active profile).
+
+x-wp-env: &wp-env
+  WORDPRESS_DB_PASSWORD: "${RECURRA_DB_PASSWORD:?run docker/vps.sh, not docker compose directly}"
+  # Behind Caddy: WordPress always builds https://RECURRA_DOMAIN URLs. The
+  # image already turns X-Forwarded-Proto: https into HTTPS = on.
+  WORDPRESS_CONFIG_EXTRA: |
+    define( 'DISABLE_WP_CRON', true );
+    define( 'WP_ENVIRONMENT_TYPE', 'production' );
+    define( 'WP_HOME', 'https://${RECURRA_DOMAIN:?}' );
+    define( 'WP_SITEURL', 'https://${RECURRA_DOMAIN:?}' );
+    define( 'FORCE_SSL_ADMIN', true );
+    define( 'DISALLOW_FILE_EDIT', true );
+    define( 'AUTOMATIC_UPDATER_DISABLED', true );
+    if ( ! defined( 'WP_CLI' ) ) { define( 'DISALLOW_FILE_MODS', true ); }
+
+services:
+  db:
+    environment:
+      MARIADB_PASSWORD: "${RECURRA_DB_PASSWORD:?}"
+    restart: unless-stopped
+
+  wordpress:
+    ports: !reset []
+    environment:
+      <<: *wp-env
+    volumes:
+      - ./vps/recurra-public.php:/var/www/html/wp-content/mu-plugins/recurra-public.php:ro
+    restart: unless-stopped
+
+  wpcli:
+    environment:
+      <<: *wp-env
+      WP_URL: "https://${RECURRA_DOMAIN:?}"
+      RECURRA_PUBLIC: "1"
+      RECURRA_PROFILE: "${RECURRA_PROFILE:-judge-demo}"
+      RECURRA_JUDGE_PASSWORD: "${RECURRA_JUDGE_PASSWORD:?}"
+    volumes:
+      - ./vps/recurra-public.php:/var/www/html/wp-content/mu-plugins/recurra-public.php:ro
+      - ./vps/profile.sh:/usr/local/bin/recurra-profile.sh:ro
+
+  cron:
+    environment:
+      <<: *wp-env
+    volumes:
+      - ./vps/recurra-public.php:/var/www/html/wp-content/mu-plugins/recurra-public.php:ro
+
+  # The charger reads its key from a compose secret: a bind mount of ONE host
+  # file (root:root, mode 600) into this container only, at /run/secrets.
+  charger:
+    env_file: !reset []
+    environment:
+      CHARGER_ENV_FILE: /run/secrets/charger_env
+    secrets:
+      - charger_env
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    depends_on:
+      - wordpress
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_HTTPS_PORT:-443}:443/udp"
+    environment:
+      RECURRA_DOMAIN: "${RECURRA_DOMAIN:?}"
+      CADDY_GLOBAL_OPTIONS: "${CADDY_GLOBAL_OPTIONS:-}"
+    volumes:
+      - ./vps/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+secrets:
+  charger_env:
+    file: "${CHARGER_ENV_HOST:-/dev/null}"
+
+volumes:
+  caddy_data:
+  caddy_config:

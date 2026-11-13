@@ -69,25 +69,32 @@ final class Recurra_Subscriptions {
 	}
 
 	/**
-	 * RPC URL for the vault's network.
+	 * RPC URL for a vault's network (default: the configured vault). An order
+	 * keeps the vault it was made on, so pass `_recurra_vault` for order calls.
+	 *
+	 * @param string $vault Vault account ('' = configured vault).
 	 */
-	public static function rpc_url(): string {
-		$url = trim( (string) Recurra_Plugin::settings()['rpc_url'] );
-		return '' !== $url ? $url : Recurra_Near_Rpc::DEFAULT_RPC[ self::network() ];
+	public static function rpc_url( string $vault = '' ): string {
+		$configured = self::vault();
+		return Recurra_Near_Rpc::url_for( '' !== $vault ? $vault : $configured, trim( (string) Recurra_Plugin::settings()['rpc_url'] ), $configured );
 	}
 
 	/**
-	 * RPC client.
+	 * RPC client for a vault's network (default: the configured vault).
+	 *
+	 * @param string $vault Vault account ('' = configured vault).
 	 */
-	public static function rpc(): Recurra_Near_Rpc {
-		return new Recurra_Near_Rpc( self::rpc_url() );
+	public static function rpc( string $vault = '' ): Recurra_Near_Rpc {
+		return new Recurra_Near_Rpc( self::rpc_url( $vault ) );
 	}
 
 	/**
-	 * Explorer base URL for the vault's network.
+	 * Explorer base URL for a vault's network (default: the configured vault).
+	 *
+	 * @param string $vault Vault account ('' = configured vault).
 	 */
-	public static function explorer(): string {
-		return 'testnet' === self::network() ? 'https://testnet.nearblocks.io' : 'https://nearblocks.io';
+	public static function explorer( string $vault = '' ): string {
+		return Recurra_Near_Rpc::explorer_for( '' !== $vault ? $vault : self::vault() );
 	}
 
 	/**
@@ -125,7 +132,7 @@ final class Recurra_Subscriptions {
 	 * @return array{decimals:int, symbol:string}|WP_Error
 	 */
 	public static function token_meta( string $token ) {
-		$meta = self::rpc()->view( $token, 'ft_metadata', array(), DAY_IN_SECONDS );
+		$meta = self::rpc( $token )->view( $token, 'ft_metadata', array(), DAY_IN_SECONDS );
 		if ( is_wp_error( $meta ) ) {
 			return $meta;
 		}
@@ -512,7 +519,7 @@ final class Recurra_Subscriptions {
 				return 'paid';
 			}
 			$plan = self::order_plan( $order );
-			$sub  = self::rpc()->view(
+			$sub  = self::rpc( (string) $order->get_meta( '_recurra_vault' ) )->view(
 				(string) $order->get_meta( '_recurra_vault' ),
 				'get_subscription_by_ref',
 				array(
@@ -677,7 +684,7 @@ final class Recurra_Subscriptions {
 		try {
 			$main  = wc_get_order( $main->get_id() );
 			$vault = (string) $main->get_meta( '_recurra_vault' );
-			$sub   = self::rpc()->view( $vault, 'get_subscription', array( 'sub_id' => $sub_id ) );
+			$sub   = self::rpc( $vault )->view( $vault, 'get_subscription', array( 'sub_id' => $sub_id ) );
 			if ( is_wp_error( $sub ) ) {
 				return $sub;
 			}
@@ -839,7 +846,7 @@ final class Recurra_Subscriptions {
 				$n,
 				(int) $sub['id'],
 				$main->get_id(),
-				esc_url( self::explorer() . '/address/' . rawurlencode( (string) $main->get_meta( '_recurra_vault' ) ) )
+				esc_url( self::explorer( (string) $main->get_meta( '_recurra_vault' ) ) . '/address/' . rawurlencode( (string) $main->get_meta( '_recurra_vault' ) ) )
 			)
 		);
 		$renewal->payment_complete( 'recurra:sub' . (int) $sub['id'] . ':' . $n );
@@ -1054,7 +1061,7 @@ final class Recurra_Subscriptions {
 			'nonce'       => wp_create_nonce( 'recurra_order_' . $order->get_id() ),
 			'restNonce'   => wp_create_nonce( 'wp_rest' ),
 			'network'     => Recurra_Near_Rpc::network_of( (string) $order->get_meta( '_recurra_vault' ) ),
-			'rpcUrl'      => self::rpc_url(),
+			'rpcUrl'      => self::rpc_url( (string) $order->get_meta( '_recurra_vault' ) ),
 			'vault'       => (string) $order->get_meta( '_recurra_vault' ),
 			'token'       => (string) ( $plan['token'] ?? '' ),
 			'decimals'    => is_wp_error( $meta ) ? 6 : $meta['decimals'],
@@ -1069,7 +1076,7 @@ final class Recurra_Subscriptions {
 			'gas'         => self::SUBSCRIBE_GAS,
 			'paid'        => $order->is_paid(),
 			'returnUrl'   => $order->get_checkout_order_received_url(),
-			'explorer'    => self::explorer(),
+			'explorer'    => self::explorer( (string) $order->get_meta( '_recurra_vault' ) ),
 			'i18n'        => array(
 				'connect'      => __( 'Connect NEAR wallet', 'recurra' ),
 				'disconnect'   => __( 'Disconnect', 'recurra' ),

@@ -1,0 +1,32 @@
+# Public HTTPS front for the Recurra demo store (docker/docker-compose.vps.yml).
+# Caddy gets and renews a Let's Encrypt certificate for {$RECURRA_DOMAIN}
+# automatically (needs ports 80 + 443 open and the DNS A record on this host,
+# no CDN proxy in front). It is the only service with published ports.
+{
+	# Extra global options from the environment, e.g. for troubleshooting:
+	#   CADDY_GLOBAL_OPTIONS="acme_ca https://acme-staging-v02.api.letsencrypt.org/directory"
+	{$CADDY_GLOBAL_OPTIONS}
+}
+
+{$RECURRA_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+		-Server
+		-X-Powered-By
+	}
+
+	# Never serve these, whatever ends up in the web root.
+	@blocked {
+		path /xmlrpc.php /wp-config.php* /.env* */.env* /.git* /.ht* /wp-content/uploads/*.php /wp-content/debug.log
+	}
+	respond @blocked 404
+
+	# Caddy sets X-Forwarded-Proto: https; the WordPress image turns that into
+	# $_SERVER['HTTPS'] = 'on', so WordPress builds https URLs (no mixed content).
+	reverse_proxy wordpress:80
+}

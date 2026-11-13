@@ -551,7 +551,7 @@ final class Recurra_REST {
 			return self::error( 'recurra_bad_account', __( 'Invalid account.', 'recurra' ), 400 );
 		}
 		$plan    = Recurra_Subscriptions::order_plan( $order );
-		$balance = Recurra_Subscriptions::rpc()->view( (string) $plan['token'], 'ft_balance_of', array( 'account_id' => $account ), 5 );
+		$balance = Recurra_Subscriptions::rpc( (string) $order->get_meta( '_recurra_vault' ) )->view( (string) $plan['token'], 'ft_balance_of', array( 'account_id' => $account ), 5 );
 		if ( is_wp_error( $balance ) ) {
 			return self::error( 'recurra_rpc', __( 'NEAR RPC is unavailable.', 'recurra' ), 502 );
 		}

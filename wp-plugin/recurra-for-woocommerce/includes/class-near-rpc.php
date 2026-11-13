@@ -43,6 +43,33 @@ final class Recurra_Near_Rpc {
 	}
 
 	/**
+	 * RPC URL for calls about `$account`: the configured URL when it serves the
+	 * same network as the configured vault and `$account`, else the default for
+	 * `$account`'s network. Keeps orders made on another vault (e.g. testnet
+	 * subscriptions after the store switched to mainnet) syncing correctly.
+	 *
+	 * @param string $account          Contract the call goes to.
+	 * @param string $configured_url   RPC URL from the settings ('' = default).
+	 * @param string $configured_vault Vault from the settings.
+	 */
+	public static function url_for( string $account, string $configured_url, string $configured_vault ): string {
+		$network = self::network_of( $account );
+		if ( '' !== $configured_url && self::network_of( $configured_vault ) === $network ) {
+			return $configured_url;
+		}
+		return self::DEFAULT_RPC[ $network ];
+	}
+
+	/**
+	 * Explorer base URL for an account's network.
+	 *
+	 * @param string $account Account id.
+	 */
+	public static function explorer_for( string $account ): string {
+		return 'testnet' === self::network_of( $account ) ? 'https://testnet.nearblocks.io' : 'https://nearblocks.io';
+	}
+
+	/**
 	 * Calls a view method. Returns the decoded JSON result (may be null).
 	 *
 	 * @param string               $contract  Contract account.

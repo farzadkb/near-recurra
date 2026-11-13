@@ -204,6 +204,14 @@ eq( false, Recurra_Tokens::merchant_allowed_in_mode( '', 'shop.testnet' ), 'unkn
 eq( 'testnet', Recurra_Near_Rpc::network_of( 'vault-v2.recurra-farzad.testnet' ), 'testnet vault' );
 eq( 'mainnet', Recurra_Near_Rpc::network_of( 'recurra-vault.near' ), 'mainnet vault' );
 eq( 'mainnet', Recurra_Near_Rpc::network_of( str_repeat( 'ab', 32 ) ), 'implicit account is mainnet' );
+// Orders keep their vault: after a testnet → mainnet switch, testnet orders still use a testnet RPC.
+$custom = 'https://rpc.example/mainnet';
+eq( $custom, Recurra_Near_Rpc::url_for( 'recurra-vault.near', $custom, 'recurra-vault.near' ), 'rpc: configured URL for the configured network' );
+eq( 'https://rpc.testnet.fastnear.com', Recurra_Near_Rpc::url_for( 'vault-v2.recurra-farzad.testnet', $custom, 'recurra-vault.near' ), 'rpc: testnet order on a mainnet store' );
+eq( 'https://rpc.mainnet.fastnear.com', Recurra_Near_Rpc::url_for( 'recurra-vault.near', 'https://rpc.example/testnet', 'vault-v2.recurra-farzad.testnet' ), 'rpc: mainnet order on a testnet store' );
+eq( 'https://rpc.testnet.fastnear.com', Recurra_Near_Rpc::url_for( 'vault-v2.recurra-farzad.testnet', '', 'vault-v2.recurra-farzad.testnet' ), 'rpc: default when not configured' );
+eq( 'https://testnet.nearblocks.io', Recurra_Near_Rpc::explorer_for( 'vault-v2.recurra-farzad.testnet' ), 'explorer: testnet' );
+eq( 'https://nearblocks.io', Recurra_Near_Rpc::explorer_for( 'recurra-vault.near' ), 'explorer: mainnet' );
 eq( '300000000000', Recurra_Amount::shift( '300', 9 ), 'period 300 s in ns' );
 eq( '1700000000', Recurra_Amount::shift_down( '1700000000999999999', 9 ), 'ns to s (floor)' );
 

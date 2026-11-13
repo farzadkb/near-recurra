@@ -9,8 +9,8 @@
 
 | Item                          | Value                                                                                                                                                      |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Submission deadline           | **2026-11-14 23:59 UTC = Sat 2026-11-15 03:29 Tehran**                                                                                               |
-| Internal deadline (submit by) | **Fri 2026-11-14 23:00 Tehran** (4.5h margin)                                                                                                        |
+| Submission deadline           | **Sat 2026-11-14 23:59 UTC = Sun 2026-11-15 03:29 Tehran**                                                                                               |
+| Internal deadline (submit by) | **Sat 2026-11-14 23:00 Tehran** (4.5h margin)                                                                                                        |
 | Required                      | Public repo (+ LICENSE), X demo post (video) tagging `@NEARProtocol` + `#NEARHackathon`, mainnet NEAR account for payout                               |
 | Submission                    | Form at nearhackathon.com/#apply or `POST https://nearhackathon.com/api/applications` — **one attempt per repo**, fixes only via /request-changes |
 | Screening                     | Claude Code + Codex check reproducibility & features first, humans decide → README must be machine-followable                                             |
@@ -339,7 +339,7 @@ Checks with green/red: 1Click reachable; API key valid (dry quote); `merchant_ac
 - Same-asset payments (USDC on NEAR → USDC on NEAR) are not offered as an origin token in the MVP.
 - Docker: `DISABLE_WP_CRON` + a `cron` service (`wp cron event run` + `wp action-scheduler run` every 30 s), because WP-cron's loopback to `localhost:8080` cannot work inside the container. Images pinned: `wordpress:7.1.4-php8.2-apache`, `wordpress:cli-2.12.0-php8.2`, `mariadb:11.8.9`, WooCommerce 11.2.2. Demo products: Coffee beans $3 (physical, free shipping) and Digital sticker pack $2; the "Pro plan" subscription product comes with Feature B.
 - Mock mode: `Recurra_OneClick_Mock` with real asset ids and fixed prices; option `recurra_mock_scenario` (success | refunded | incomplete | failed) selects the outcome for tests.
-- Admin health page is phase 4 (Thu 18:00–22:00), not built yet.
+- Admin health page is phase 4 (Fri 18:00–22:00), not built yet.
 
 ---
 
@@ -419,18 +419,20 @@ Contract: `cd contracts/vault && cargo test && cargo test --test integration` ru
 
 ## 8. Timeline (Tehran time)
 
+Thu = 2026-11-12, Fri = 2026-11-13, Sat = 2026-11-14, Sun = 2026-11-15 (deadline Sun 03:29 Tehran = Sat 23:59 UTC).
+
 | When                                  | Work                                                                                                                                                                                                | Done when                                         |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| **Wed 14:00–17:00**            | Toolchain (rustup + wasm target, `cargo-near`, `near` CLI, Node 20, Docker). Create mainnet + testnet accounts. Get NEAR Builders AI credits not needed. Repo scaffold, MIT LICENSE. | `cargo near build` works on hello contract      |
-| **Wed 17:00–Thu 02:00**        | Vault contract + unit tests + sandbox integration tests. Deploy to testnet with mock-ft, manual lifecycle via CLI.                                                                               | all invariant tests green                         |
-| **Thu 10:00–18:00**            | Plugin Feature A: gateway, 1Click client + mock, pay page, REST, poller, status mapping. Docker compose.                                                                                            | mock checkout completes in Docker                 |
-| **Thu 18:00–22:00**            | **Real mainnet test**: $1–2 USDC from Arbitrum/Base → merchant USDC on NEAR. Fix whatever breaks. Admin health page.                                                                        | real order auto-completed                         |
-| **Thu 22:00–Fri 01:00**        | Deploy vault to mainnet; storage_deposit vault + merchant on USDC; create demo plan ($1 / 5 min).                                                                                                   | `get_plans` returns plan                        |
-| **Fri 10:00–17:00**            | Feature B in WP: wallet-selector bundle, subscribe page, confirm via view, renewal job, My Account tab, cancel. Charger.                                                                            | live: subscribe → 2 renewals → cancel → refund |
-| **Fri 17:00 — FEATURE FREEZE** |                                                                                                                                                                                                     |                                                   |
-| **Fri 17:00–20:00**            | README, ARCHITECTURE.md, screenshots, record video, make repo public, add `hackathon-submission` tag.                                                                                             | fresh clone passes README steps                   |
-| **Fri 20:00–22:00**            | Publish X post. Fill submission. **Submit.**                                                                                                                                                  | confirmation received                             |
-| Fri 22:00–Sat 03:29                  | Buffer only. Do not start new features.                                                                                                                                                             |                                                   |
+| **Thu 14:00–17:00**            | Toolchain (rustup + wasm target, `cargo-near`, `near` CLI, Node 20, Docker). Create mainnet + testnet accounts. Get NEAR Builders AI credits not needed. Repo scaffold, MIT LICENSE. | `cargo near build` works on hello contract      |
+| **Thu 17:00–Fri 02:00**        | Vault contract + unit tests + sandbox integration tests. Deploy to testnet with mock-ft, manual lifecycle via CLI.                                                                               | all invariant tests green                         |
+| **Fri 10:00–18:00**            | Plugin Feature A: gateway, 1Click client + mock, pay page, REST, poller, status mapping. Docker compose.                                                                                            | mock checkout completes in Docker                 |
+| **Fri 18:00–22:00**            | **Real mainnet test**: $1–2 USDC from Arbitrum/Base → merchant USDC on NEAR. Fix whatever breaks. Admin health page.                                                                        | real order auto-completed                         |
+| **Fri 22:00–Sat 01:00**        | Deploy vault to mainnet; storage_deposit vault + merchant on USDC; create demo plan ($1 / 5 min).                                                                                                   | `get_plans` returns plan                        |
+| **Sat 10:00–17:00**            | Feature B in WP: wallet-selector bundle, subscribe page, confirm via view, renewal job, My Account tab, cancel. Charger.                                                                            | live: subscribe → 2 renewals → cancel → refund |
+| **Sat 17:00 — FEATURE FREEZE** |                                                                                                                                                                                                     |                                                   |
+| **Sat 17:00–20:00**            | README, ARCHITECTURE.md, screenshots, record video, make repo public, add `hackathon-submission` tag.                                                                                             | fresh clone passes README steps                   |
+| **Sat 20:00–22:00**            | Publish X post. Fill submission. **Submit.**                                                                                                                                                  | confirmation received                             |
+| Sat 22:00–Sun 03:29                  | Buffer only. Do not start new features.                                                                                                                                                             |                                                   |
 
 ### Cut list (in this order if behind)
 

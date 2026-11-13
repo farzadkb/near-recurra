@@ -1,8 +1,67 @@
 # Recurra
 
-WooCommerce payments and recurring billing on NEAR. Work in progress for the NEAR Hackathon (Nov 2026) — see [docs/PLAN.md](docs/PLAN.md).
+**Crypto can't do recurring billing. Recurra lets a customer sign a spending rule (max X per period, only to this merchant, cancel anytime) that a NEAR contract enforces — live on mainnet.**
+
+- **Subscriptions.** With one signature the customer prepays N periods into the Recurra Vault contract. The contract can pay only the plan's merchant, at most the plan amount once per period. Anyone may trigger a due charge, but nobody can change the terms. The customer cancels at any time and gets the rest back. The WooCommerce plugin turns every on-chain charge into a renewal order.
+- **Fund from any chain.** Checkout runs through NEAR Intents (1Click): the customer pays USDC and more on Arbitrum, Base, Ethereum, Solana and others, and the merchant receives native USDC on NEAR.
+
+Built for the NEAR Hackathon (Nov 2026); the plan is in [docs/PLAN.md](docs/PLAN.md).
 
 > Hackathon code, unaudited.
+
+## Hosted demo
+
+**https://recurra.enoor.pp.ua** · judge login **`customer`** / **`recurra-judge-2026`** (shared account; its password and email cannot be changed)
+
+The store normally runs in judge mode: checkout uses mock mode (no real funds), and subscriptions run on NEAR **testnet** with a free test token. A notice on every page repeats these steps.
+
+1. Log in at https://recurra.enoor.pp.ua/my-account/. Guests can buy too, but the login adds **My Account → Subscriptions**.
+2. **Shop → Pro plan (testnet)** ($1 every 5 minutes) → Checkout → Place order.
+3. On the subscribe page, connect a testnet wallet (e.g. create one at https://testnet.mynearwallet.com). Click **Get 100 test tokens (testnet faucet)**, pick the number of periods and sign **one** transaction. → The order turns *Processing* once the server has read the subscription back from the chain.
+4. Every 5 minutes the hosted charger charges one period. → A renewal order appears under **My Account → Orders**. **My Account → Subscriptions → Cancel** refunds the remaining balance to your wallet.
+
+The multi-chain checkout is on the same store: **Coffee beans → Pay with crypto (any chain)** → a mock deposit address, which turns *Processing* by itself in about 30 s. To run everything locally instead, see [Try the checkout in 5 minutes](#try-the-checkout-in-5-minutes-mock-mode-no-funds) below. How the server is set up: [docs/VPS.md](docs/VPS.md).
+
+## Live proof on mainnet
+
+### Subscription vault
+
+[`recurra-vault.near`](https://nearblocks.io/address/recurra-vault.near) runs the reproducible build of commit `ad9de6e` (wasm sha256 `f886bee28e2dd786e2ec80af3e9548ace0a6acf177da3fbc3732fa8c69651e2a`, on-chain code hash `Hj9HAoWYCpxbru4RSePSVa29ofwmWdB4Vnhnfk6ygHsX`).
+
+| Step | Signer | Tx |
+| --- | --- | --- |
+| deploy + `new(owner = recurra-vault.near)` | `recurra-vault.near` | [71dKyT…](https://nearblocks.io/txns/71dKyTKDsvDAz8V1YPEk2RxYNjninvwW73B9oUsW5hPK) |
+| `storage_deposit` on USDC for the vault | `recurra-vault.near` | [FWtUY1…](https://nearblocks.io/txns/FWtUY1uvne77ikmLaXUf4vJFdc3zcgStBuXDsGLF5v6N) |
+| `create_plan` → plan 1 "Demo plan", 1 USDC / 300 s | `recurra-shop.near` | [9DD3MN…](https://nearblocks.io/txns/9DD3MNm5x18GY6pTMX2nxNA2GpamDiTQPs5CfeoMrff) |
+
+Demo view (read-only, public RPCs, no keys): `scripts/balances.sh [sub_id] [--watch N] [--reset]` prints the USDC balances of the vault, merchant and customer (NEAR and Base), the vault's `total_held`, optional subscription details, and the change since the previous run.
+
+Verify (read-only):
+
+```sh
+near contract call-function as-read-only recurra-vault.near get_owner json-args '{}' network-config mainnet now                   # "recurra-vault.near"
+near contract call-function as-read-only recurra-vault.near contract_source_metadata json-args '{}' network-config mainnet now    # link …/tree/ad9de6e9…
+near contract call-function as-read-only recurra-vault.near get_plans json-args '{"merchant":"recurra-shop.near"}' network-config mainnet now
+near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1 storage_balance_of json-args '{"account_id":"recurra-vault.near"}' network-config mainnet now
+```
+
+→ owner `"recurra-vault.near"`; plan `1` with `"amount": "1000000"`, `"period_sec": 300`, `"active": true`; vault registered on USDC (`"total": "1250000000000000000000"`).
+
+### Checkout payment (fund from any chain)
+
+Real checkout (plugin in live mode, real 1Click swap): customer pays USDC on Base, merchant `recurra-shop.near` receives native USDC on NEAR.
+
+| Date (UTC) | Order | Paid with | Base tx (customer → 1Click deposit address) | Merchant received | NEAR tx |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-11 | $0.50 | 0.500103 USDC on Base | [0xaf0418…1f93](https://basescan.org/tx/0xaf0418d5f81a3dd9579bf92a032244d41cd4cb3f39ecfbf1c90e6fb2b29d1f93) | exactly 0.50 USDC (`500000`) | [H41R6h…eWSpP](https://nearblocks.io/txns/H41R6h5PK3eVNuSvVc9kb21WiiAAspdjVMs45B3eWSpP) |
+
+Deposit address `0x776b1135Da69B5cbf6547CE70746C61a22Df75D1` — search it on [explorer.near-intents.org](https://explorer.near-intents.org). Check the merchant balance yourself:
+
+```sh
+near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1 ft_balance_of json-args '{"account_id":"recurra-shop.near"}' network-config mainnet now
+```
+
+→ at least `"500000"` (0.50 USDC; later demo payments add to it).
 
 ## Prerequisites
 
@@ -59,7 +118,7 @@ docker compose -f docker/docker-compose.yml run --rm wpcli sh /usr/local/bin/hpo
 
 Reset everything: `docker compose -f docker/docker-compose.yml down -v`.
 
-Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `75 assertions, 0 failures`.
+Plugin unit tests (no WordPress needed): `php wp-plugin/recurra-for-woocommerce/tests/unit.php` → `81 assertions, 0 failures`.
 
 ## Try subscriptions on testnet (Feature B, ~15 minutes, no real money)
 
@@ -236,44 +295,7 @@ journalctl -u recurra-charger -f
 
 → `charger recurra-shop.near → recurra-vault.near on mainnet …` then `nothing due` / `sub N: charged https://nearblocks.io/txns/…` every minute. Use `command -v node` if Node ≥ 22.18 is not at `/usr/bin/node`. The key file is readable only by the `recurra` user; the key can only call `charge`, and its NEAR allowance caps what it can spend on gas.
 
-## Live proof on mainnet
-
-Real checkout (plugin in live mode, real 1Click swap): customer pays USDC on Base, merchant `recurra-shop.near` receives native USDC on NEAR.
-
-| Date (UTC) | Order | Paid with | Base tx (customer → 1Click deposit address) | Merchant received | NEAR tx |
-| --- | --- | --- | --- | --- | --- |
-| 2026-11-11 | $0.50 | 0.500103 USDC on Base | [0xaf0418…1f93](https://basescan.org/tx/0xaf0418d5f81a3dd9579bf92a032244d41cd4cb3f39ecfbf1c90e6fb2b29d1f93) | exactly 0.50 USDC (`500000`) | [H41R6h…eWSpP](https://nearblocks.io/txns/H41R6h5PK3eVNuSvVc9kb21WiiAAspdjVMs45B3eWSpP) |
-
-Deposit address `0x776b1135Da69B5cbf6547CE70746C61a22Df75D1` — search it on [explorer.near-intents.org](https://explorer.near-intents.org). Check the merchant balance yourself:
-
-```sh
-near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1 ft_balance_of json-args '{"account_id":"recurra-shop.near"}' network-config mainnet now
-```
-
-→ at least `"500000"` (0.50 USDC; later demo payments add to it).
-
-### Mainnet vault
-
-[`recurra-vault.near`](https://nearblocks.io/address/recurra-vault.near) runs the reproducible build of commit `ad9de6e` (wasm sha256 `f886bee28e2dd786e2ec80af3e9548ace0a6acf177da3fbc3732fa8c69651e2a`, on-chain code hash `Hj9HAoWYCpxbru4RSePSVa29ofwmWdB4Vnhnfk6ygHsX`).
-
-| Step | Signer | Tx |
-| --- | --- | --- |
-| deploy + `new(owner = recurra-vault.near)` | `recurra-vault.near` | [71dKyT…](https://nearblocks.io/txns/71dKyTKDsvDAz8V1YPEk2RxYNjninvwW73B9oUsW5hPK) |
-| `storage_deposit` on USDC for the vault | `recurra-vault.near` | [FWtUY1…](https://nearblocks.io/txns/FWtUY1uvne77ikmLaXUf4vJFdc3zcgStBuXDsGLF5v6N) |
-| `create_plan` → plan 1 "Demo plan", 1 USDC / 300 s | `recurra-shop.near` | [9DD3MN…](https://nearblocks.io/txns/9DD3MNm5x18GY6pTMX2nxNA2GpamDiTQPs5CfeoMrff) |
-
-Demo view (read-only, public RPCs, no keys): `scripts/balances.sh [sub_id] [--watch N] [--reset]` prints the USDC balances of the vault, merchant and customer (NEAR and Base), the vault's `total_held`, optional subscription details, and the change since the previous run.
-
-Verify (read-only):
-
-```sh
-near contract call-function as-read-only recurra-vault.near get_owner json-args '{}' network-config mainnet now                   # "recurra-vault.near"
-near contract call-function as-read-only recurra-vault.near contract_source_metadata json-args '{}' network-config mainnet now    # link …/tree/ad9de6e9…
-near contract call-function as-read-only recurra-vault.near get_plans json-args '{"merchant":"recurra-shop.near"}' network-config mainnet now
-near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1 storage_balance_of json-args '{"account_id":"recurra-vault.near"}' network-config mainnet now
-```
-
-→ owner `"recurra-vault.near"`; plan `1` with `"amount": "1000000"`, `"period_sec": 300`, `"active": true`; vault registered on USDC (`"total": "1250000000000000000000"`).
+**3. Or the whole demo stack on a VPS.** `docker/vps.sh` runs the Docker store behind Caddy with automatic HTTPS. It sets a random admin password, turns off XML-RPC and registration, keeps keys in `/opt/recurra/secrets` (mounted into the charger only), and switches between the `judge-demo` and `mainnet-demo` profiles with one command. The step-by-step guide, with expected output and certificate troubleshooting, is in [docs/VPS.md](docs/VPS.md).
 
 ## Build the contracts
 

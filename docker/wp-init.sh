@@ -30,9 +30,19 @@ until wp db check --quiet >/dev/null 2>&1; do
 	sleep 2
 done
 
+# Public hosting (docker/docker-compose.vps.yml) sets RECURRA_PUBLIC=1: random
+# admin password, never printed here (set and show one with `docker/vps.sh admin-password`).
+PUBLIC="${RECURRA_PUBLIC:-0}"
+random_pw() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; }
+if [ "$PUBLIC" = 1 ]; then ADMIN_PW="$(random_pw)"; else ADMIN_PW=admin; fi
 if ! wp core is-installed 2>/dev/null; then
 	wp core install --url="$WP_URL" --title="Recurra Demo Store" \
-		--admin_user=admin --admin_password=admin --admin_email=admin@example.com --skip-email
+		--admin_user=admin --admin_password="$ADMIN_PW" --admin_email=admin@example.com --skip-email
+fi
+if [ "$PUBLIC" = 1 ]; then
+	if wp user check-password admin admin 2>/dev/null; then
+		wp user update admin --user_pass="$ADMIN_PW" --skip-email --quiet
+	fi
 fi
 wp rewrite structure '/%postname%/' --quiet
 
@@ -41,6 +51,26 @@ if ! wp plugin is-installed woocommerce; then
 fi
 wp plugin activate woocommerce --quiet
 wp plugin activate recurra-for-woocommerce --quiet
+
+if [ "$PUBLIC" = 1 ]; then
+	# No self-registration; guests can still check out.
+	opt users_can_register 0
+	opt default_role subscriber
+	opt woocommerce_enable_myaccount_registration no
+	opt woocommerce_enable_signup_and_login_from_checkout no
+	opt default_pingback_flag 0
+	opt default_ping_status closed
+	opt default_comment_status closed
+	# Shared judge login (credentials are public in the README; the account is
+	# locked against changes by the mu-plugin docker/vps/recurra-public.php).
+	opt recurra_judge_login customer
+	if ! wp user get customer --field=ID >/dev/null 2>&1; then
+		wp user create customer judge@example.com --role=customer --display_name="Demo Judge" \
+			--user_pass="${RECURRA_JUDGE_PASSWORD:?}" --quiet
+	elif ! wp user check-password customer "${RECURRA_JUDGE_PASSWORD:?}" 2>/dev/null; then
+		wp user update customer --user_pass="$RECURRA_JUDGE_PASSWORD" --role=customer --skip-email --quiet
+	fi
+fi
 
 # Order storage: HPOS (WooCommerce's default for new stores) unless RECURRA_HPOS=off.
 # Recurra works with both; switch later with docker/hpos-mode.sh.
@@ -69,10 +99,16 @@ if [ "$(wp wc shipping_zone_method list 0 --user=admin --format=count)" = "0" ];
 fi
 
 # Recurra gateway: enabled, MOCK checkout (no funds); subscriptions on testnet.
+# A 1Click API key entered in the admin is kept across re-runs.
+API_KEY="$(wp option pluck woocommerce_recurra_settings api_key 2>/dev/null || true)"
+export API_KEY
 opt woocommerce_recurra_settings "$(cat <<JSON
 {"enabled":"yes","title":"Pay with crypto (any chain)","description":"Pay with USDC, ETH, SOL, BTC, NEAR and more via NEAR Intents.","mode":"mock","merchant_account":"$MERCHANT","destination_asset":"nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1","api_key":"","allowed_chains":"arb,base,eth,sol,op,pol,near,btc","slippage_bps":"100","quote_ttl_min":"30","vault_contract":"$VAULT","rpc_url":""}
 JSON
 )" --format=json
+if [ -n "$API_KEY" ]; then
+	wp eval '$s = get_option( "woocommerce_recurra_settings" ); $s["api_key"] = getenv( "API_KEY" ); update_option( "woocommerce_recurra_settings", $s );'
+fi
 
 # Demo products (by SKU, idempotent).
 create_product() { # sku name price virtual
@@ -97,4 +133,10 @@ $p->save();
 echo "[recurra] Pro plan linked to vault plan " . getenv( "PLAN_ID" ) . "\n";
 '
 
-echo "[recurra] ready: $WP_URL (admin/admin) — checkout in MOCK mode, subscriptions on testnet ($VAULT), HPOS ${RECURRA_HPOS:-on}"
+if [ -n "${RECURRA_PROFILE:-}" ]; then
+	# Hosted demo: re-apply the active profile (docker/vps/profile.sh) on every start.
+	sh /usr/local/bin/recurra-profile.sh "$RECURRA_PROFILE"
+	echo "[recurra] ready: $WP_URL — profile $RECURRA_PROFILE, HPOS ${RECURRA_HPOS:-on}"
+else
+	echo "[recurra] ready: $WP_URL (admin/admin) — checkout in MOCK mode, subscriptions on testnet ($VAULT), HPOS ${RECURRA_HPOS:-on}"
+fi
