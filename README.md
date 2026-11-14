@@ -5,7 +5,14 @@
 - **Subscriptions.** With one signature the customer prepays N periods into the Recurra Vault contract. The contract can pay only the plan's merchant, at most the plan amount once per period. Anyone may trigger a due charge, but nobody can change the terms. The customer cancels at any time and gets the rest back. The WooCommerce plugin turns every on-chain charge into a renewal order.
 - **Fund from any chain.** Checkout runs through NEAR Intents (1Click): the customer pays USDC and more on Arbitrum, Base, Ethereum, Solana and others, and the merchant receives native USDC on NEAR.
 
-Built for the NEAR Hackathon (Nov 2026); the plan is in [docs/PLAN.md](docs/PLAN.md).
+| | |
+| --- | --- |
+| **Hosted demo** | https://recurra.enoor.pp.ua · judge login `customer` / `recurra-judge-2026` ([details](#hosted-demo)) |
+| **Demo video** (full, ~8 min) | `<YOUTUBE_URL>` |
+| **Demo post on X** | `<X_POST_URL>` |
+| **Mainnet proof** | [checkout + subscription transactions](#live-proof-on-mainnet) |
+
+Built from scratch for the NEAR Hackathon (Nov 2026) during the hackathon window: the first commit is from 2026-11-11, and the repo contains no earlier code of ours (third-party libraries are listed in the lockfiles). The plan is in [docs/PLAN.md](docs/PLAN.md).
 
 > Hackathon code, unaudited.
 
@@ -24,7 +31,37 @@ The multi-chain checkout is on the same store: **Coffee beans → Pay with crypt
 
 ## Live proof on mainnet
 
-### Subscription vault
+All of this happened on NEAR mainnet with real USDC; every hash below was checked read-only against public RPCs and the 1Click status API. The 2026-11-14 run was recorded for the demo video on the hosted store (profile `mainnet-demo`).
+
+### Subscription run (2026-11-14)
+
+`customer_main.near` subscribed to plan 1 (**Demo plan**, 1 USDC / 5 min, merchant `recurra-shop.near`) on [`recurra-vault.near`](https://nearblocks.io/address/recurra-vault.near), prepaying 3 periods with one signature. Subscription id on the vault: `1`.
+
+| Time (UTC) | Step | Store | On-chain result | Tx |
+| --- | --- | --- | --- | --- |
+| 04:15:30 | customer signs `ft_transfer_call` (subscribe, `charge_now`) | order #22 → Processing | 3.00 USDC customer → vault; charge #1: 1.00 USDC vault → merchant (memo `recurra:1:1`) | [a8tD72…](https://nearblocks.io/txns/a8tD72rCBuR8HwNFc2THWY1qUU4FwX5smvqiUamTjYK) |
+| 04:20:53 | charger calls `charge` | renewal order | charge #2: 1.00 USDC vault → merchant (`recurra:1:2`) | [FisxfwoC…](https://nearblocks.io/txns/FisxfwoCEYa2kXmD9S8AnJ7DhUtwMGYwT1beKSB1ysGn) |
+| 04:25:57 | charger calls `charge` | renewal order #24 | charge #3: 1.00 USDC vault → merchant (`recurra:1:3`); prepaid balance now 0 | [BqE4Fm…](https://nearblocks.io/txns/BqE4FmaKzXw63uvg1UcnEsRRGN78JoMeM82TEewDXw1P) |
+| 04:31:01 | charger calls `charge` again | — | **no transfer**: balance 0 → event `past_due`, returns `false` | [3QRVBQ…](https://nearblocks.io/txns/3QRVBQXqj6Y8frzPF2qP2sgdk1w5bUEfCfWT4rdYk2er) |
+
+The charger signs with a key that can only call `charge`; the contract decided each amount and recipient. Final state:
+
+```sh
+near contract call-function as-read-only recurra-vault.near get_subscription json-args '{"sub_id":1}' network-config mainnet now
+near contract call-function as-read-only recurra-vault.near get_total_held json-args '{"token":"17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"}' network-config mainnet now
+near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1 ft_balance_of json-args '{"account_id":"recurra-vault.near"}' network-config mainnet now
+```
+
+→ `"status": "PastDue"`, `"charges_count": 3`, `"balance": "0"`; `total_held` `"0"`; vault USDC balance `"0"`. The same view with `scripts/balances.sh 1` (read-only, public RPCs, no keys):
+
+```
+Vault      recurra-vault.near           NEAR            0.00
+In subs    vault total_held             NEAR            0.00
+Subscription #1  PastDue   balance 0.00 USDC   charges 3   1.00 per 300s
+  owner customer_main.near  →  merchant recurra-shop.near
+```
+
+### Subscription vault (deployment)
 
 [`recurra-vault.near`](https://nearblocks.io/address/recurra-vault.near) runs the reproducible build of commit `ad9de6e` (wasm sha256 `f886bee28e2dd786e2ec80af3e9548ace0a6acf177da3fbc3732fa8c69651e2a`, on-chain code hash `Hj9HAoWYCpxbru4RSePSVa29ofwmWdB4Vnhnfk6ygHsX`).
 
@@ -34,7 +71,7 @@ The multi-chain checkout is on the same store: **Coffee beans → Pay with crypt
 | `storage_deposit` on USDC for the vault | `recurra-vault.near` | [FWtUY1…](https://nearblocks.io/txns/FWtUY1uvne77ikmLaXUf4vJFdc3zcgStBuXDsGLF5v6N) |
 | `create_plan` → plan 1 "Demo plan", 1 USDC / 300 s | `recurra-shop.near` | [9DD3MN…](https://nearblocks.io/txns/9DD3MNm5x18GY6pTMX2nxNA2GpamDiTQPs5CfeoMrff) |
 
-Demo view (read-only, public RPCs, no keys): `scripts/balances.sh [sub_id] [--watch N] [--reset]` prints the USDC balances of the vault, merchant and customer (NEAR and Base), the vault's `total_held`, optional subscription details, and the change since the previous run.
+Demo view: `scripts/balances.sh [sub_id] [--watch N] [--reset]` prints the USDC balances of the vault, merchant and customer (NEAR and Base), the vault's `total_held`, optional subscription details, and the change since the previous run.
 
 Verify (read-only):
 
@@ -47,21 +84,22 @@ near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398e
 
 → owner `"recurra-vault.near"`; plan `1` with `"amount": "1000000"`, `"period_sec": 300`, `"active": true`; vault registered on USDC (`"total": "1250000000000000000000"`).
 
-### Checkout payment (fund from any chain)
+### Checkout payments (fund from any chain)
 
-Real checkout (plugin in live mode, real 1Click swap): customer pays USDC on Base, merchant `recurra-shop.near` receives native USDC on NEAR.
+Real checkouts (plugin in live mode, real 1Click swaps): the customer pays USDC on Base, and the merchant `recurra-shop.near` receives native USDC on NEAR. Each payment has three transactions: the customer's Base transfer to the 1Click deposit address, the NEAR Intents deposit on NEAR (bridge), and the delivery from `intents.near` to the merchant.
 
-| Date (UTC) | Order | Paid with | Base tx (customer → 1Click deposit address) | Merchant received | NEAR tx |
-| --- | --- | --- | --- | --- | --- |
-| 2026-11-11 | $0.50 | 0.500103 USDC on Base | [0xaf0418…1f93](https://basescan.org/tx/0xaf0418d5f81a3dd9579bf92a032244d41cd4cb3f39ecfbf1c90e6fb2b29d1f93) | exactly 0.50 USDC (`500000`) | [H41R6h…eWSpP](https://nearblocks.io/txns/H41R6h5PK3eVNuSvVc9kb21WiiAAspdjVMs45B3eWSpP) |
+| Date (UTC) | Order | Paid on Base | Base tx (customer → deposit address) | Intents deposit (NEAR) | Merchant received | Delivery tx (`intents.near` → merchant) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-11 | $0.50 | 0.500103 USDC | [0xaf0418…1f93](https://basescan.org/tx/0xaf0418d5f81a3dd9579bf92a032244d41cd4cb3f39ecfbf1c90e6fb2b29d1f93) | [H41R6h…](https://nearblocks.io/txns/H41R6h5PK3eVNuSvVc9kb21WiiAAspdjVMs45B3eWSpP) | exactly 0.50 USDC (`500000`) | [Ch3xtaU…](https://nearblocks.io/txns/Ch3xtaUeJUw5QR8778AXVEwgAUPoTvjGuN3k98QFWqLu) |
+| 2026-11-14 | #19, $1.00 | 1.010224 USDC | [0xafd880…23f1](https://basescan.org/tx/0xafd8808e518cf97365176f2d3647caf46d818393cdacb117371854b34b1623f1) | [3RS8mi…](https://nearblocks.io/txns/3RS8mioi21swqTkws3i2sb47JdmGgjsbvhRy6sTPFvuE) | exactly 1.00 USDC (`1000000`) | [EXYQSG…](https://nearblocks.io/txns/EXYQSGAKaByEg7Y8SVQDgc87D25fojDop1qzjS338R2L) |
 
-Deposit address `0x776b1135Da69B5cbf6547CE70746C61a22Df75D1` — search it on [explorer.near-intents.org](https://explorer.near-intents.org). Check the merchant balance yourself:
+Order #19 was overpaid; 1Click swapped the 1.000121 USDC needed and refunded the excess, 0.007703 USDC, to the customer on Base ([0x26c053…e2ce](https://basescan.org/tx/0x26c05333de58534092144873f510136f772897c6fd48743e4dd87995c5f4e2ce)). Deposit addresses: `0x776b1135Da69B5cbf6547CE70746C61a22Df75D1` (2026-11-11) and `0x3d90d7b5eab8ea16ecd044cc56f3ae6cd10fdf0f` (#19). Look them up on [explorer.near-intents.org](https://explorer.near-intents.org), or ask the 1Click API:
 
 ```sh
-near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1 ft_balance_of json-args '{"account_id":"recurra-shop.near"}' network-config mainnet now
+curl -s "https://1click.chaindefuser.com/v0/status?depositAddress=0x3d90d7b5eab8ea16ecd044cc56f3ae6cd10fdf0f"
 ```
 
-→ at least `"500000"` (0.50 USDC; later demo payments add to it).
+→ `"status":"SUCCESS"`, `"amountOutFormatted":"1.0"`, recipient `recurra-shop.near`, and the delivery hash in `destinationChainTxHashes`.
 
 ## Prerequisites
 
@@ -368,6 +406,25 @@ near contract call-function as-read-only vault-v2.recurra-farzad.testnet get_sub
 ```
 
 → `"status": "Cancelled"`, `"charges_count": 2`, `"balance": "0"`, `"in_flight": null`.
+
+## Limitations
+
+- **Not audited.** Hackathon code. The mainnet vault `recurra-vault.near` still has a full-access key, so its owner can upgrade the code; see Future work.
+- **1Click trust window (checkout).** Between the customer's deposit and the delivery to the merchant, the funds are with NEAR Intents / 1Click. The plugin marks an order paid only after 1Click reports `SUCCESS` and the reported recipient, asset and amount match the quote. It trusts the 1Click status API for that and doesn't trace the delivery on-chain itself. Refunds of failed or partial deposits are made by 1Click, not by the store.
+- **Prepaid subscriptions.** NEP-141 tokens have no allowance, so the customer prepays N periods into the vault and tops up later. When the balance runs out, the subscription becomes `PastDue` (see the mainnet run above) until a top-up; nothing is pulled from the wallet.
+- **The customer needs a NEAR account** with a little NEAR for gas and USDC on NEAR to subscribe. Checkout from other chains works without one.
+- **USD stores only.** The gateway is offered only when the WooCommerce currency is USD (prices are quoted 1:1 in USDC).
+- **Excluded deposit chains.** Chains that need a deposit memo (XRP, Stellar, TON) are never offered. Tron and BNB Chain are offered only above 1Click's swap minimums ($100 / $1,000).
+
+## Fees
+
+Recurra charges nothing. Checkout swaps pay the NEAR Intents / 1Click fees. Without a 1Click API key (partner JWT, *API key* in the gateway settings), every quote carries an extra **0.25%** platform fee. With a key, the [partner fee schedule](https://docs.near-intents.org/integration/distribution-channels/1click-api/authentication.md) applies (typically 0.20%, or 0.01% on stablecoin routes). Subscriptions don't use 1Click: each charge costs only NEAR gas, paid by whoever calls `charge`.
+
+## Future work
+
+- **EVM wallets for subscriptions:** let customers sign with MetaMask & co. through NEAR's ETH-implicit accounts, without creating a NEAR account first.
+- **Native WooCommerce Subscriptions integration:** map vault plans to WooCommerce Subscriptions products and renewals, instead of Recurra's own renewal orders.
+- **Lock the contract after an audit:** remove the vault's full-access key so the code can no longer be changed.
 
 ## License
 
