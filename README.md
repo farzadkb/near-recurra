@@ -67,7 +67,7 @@ Subscription #1  PastDue   balance 0.00 USDC   charges 3   1.00 per 300s
 
 ### Subscription vault (deployment)
 
-[`recurra-vault.near`](https://nearblocks.io/address/recurra-vault.near) runs the reproducible build of commit `ad9de6e` (wasm sha256 `f886bee28e2dd786e2ec80af3e9548ace0a6acf177da3fbc3732fa8c69651e2a`, on-chain code hash `Hj9HAoWYCpxbru4RSePSVa29ofwmWdB4Vnhnfk6ygHsX`).
+[`recurra-vault.near`](https://nearblocks.io/address/recurra-vault.near) runs a reproducible (NEP-330) build of the vault in [`contracts/vault`](contracts/vault): wasm sha256 `f886bee28e2dd786e2ec80af3e9548ace0a6acf177da3fbc3732fa8c69651e2a`, on-chain code hash `Hj9HAoWYCpxbru4RSePSVa29ofwmWdB4Vnhnfk6ygHsX`. It was built at commit `ad9de6e`, which is now `37e410d` (see [history rewrite](#history-rewrite-and-reproducible-builds)).
 
 | Step | Signer | Tx |
 | --- | --- | --- |
@@ -81,12 +81,13 @@ Verify (read-only):
 
 ```sh
 near contract call-function as-read-only recurra-vault.near get_owner json-args '{}' network-config mainnet now                   # "recurra-vault.near"
-near contract call-function as-read-only recurra-vault.near contract_source_metadata json-args '{}' network-config mainnet now    # link …/tree/ad9de6e9…
+near contract call-function as-read-only recurra-vault.near contract_source_metadata json-args '{}' network-config mainnet now    # link …/tree/ad9de6e9… (pre-rewrite commit)
+near account view-account-summary recurra-vault.near network-config mainnet now                                                # Contract SHA-256 f886bee2…
 near contract call-function as-read-only recurra-vault.near get_plans json-args '{"merchant":"recurra-shop.near"}' network-config mainnet now
 near contract call-function as-read-only 17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1 storage_balance_of json-args '{"account_id":"recurra-vault.near"}' network-config mainnet now
 ```
 
-→ owner `"recurra-vault.near"`; plan `1` with `"amount": "1000000"`, `"period_sec": 300`, `"active": true`; vault registered on USDC (`"total": "1250000000000000000000"`).
+→ owner `"recurra-vault.near"`; deployed code `f886bee2…` = the wasm hash above; plan `1` with `"amount": "1000000"`, `"period_sec": 300`, `"active": true`; vault registered on USDC (`"total": "1250000000000000000000"`).
 
 ### Checkout payments (fund from any chain)
 
@@ -379,20 +380,27 @@ Each invariant from [docs/PLAN.md §3](docs/PLAN.md) has dedicated tests:
 
 | Contract | Account |
 | --- | --- |
-| Recurra Vault (current) | [`vault-v2.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault-v2.recurra-farzad.testnet) — reproducible build, wasm sha256 `1ff5dc13b0e32e0f6e1bf3e0773cad3448798e8979590d399b0570779fcc9e6e` (commit `4d60119`) |
+| Recurra Vault (current) | [`vault-v2.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/vault-v2.recurra-farzad.testnet) — reproducible build, wasm sha256 `1ff5dc13b0e32e0f6e1bf3e0773cad3448798e8979590d399b0570779fcc9e6e`, built at commit `4d60119` (now `2074fca`, see below) |
 | Mock USDC (6 decimals, test only; public `faucet`: ≤ 100 mUSDC per call, 1 claim per account per hour) | [`musdc.recurra-farzad.testnet`](https://testnet.nearblocks.io/address/musdc.recurra-farzad.testnet) — upgraded in place with the faucet ([A7eXDv…](https://testnet.nearblocks.io/txns/A7eXDvM9CHahr9ZQp9MZgFrRTHkgavtro8XepmYXmmZa)) |
 
 `vault.recurra-farzad.testnet` holds the earlier, non-reproducible build (before the in-flight/gas hardening) and is kept only for history.
 
-Verify the deployed code matches this repo:
+Check the deployed code is the published build (read-only):
 
 ```sh
-cd contracts/vault
-cargo near build reproducible-wasm     # needs Docker
-sha256sum target/near/recurra_vault.wasm
+near account view-account-summary vault-v2.recurra-farzad.testnet network-config testnet now   # Contract SHA-256 1ff5dc13…
 ```
 
-→ `1ff5dc13b0e32e0f6e1bf3e0773cad3448798e8979590d399b0570779fcc9e6e` at commit `4d60119`; the same commit and Docker image digest are returned on-chain by `contract_source_metadata` (NEP-330).
+### History rewrite and reproducible builds
+
+On 2026-11-14 we rewrote this repo's git history to remove a local development file that was never meant to be published; it held no code or secrets. Every commit hash changed. The deployed vaults were built before the rewrite:
+
+| Vault | Built at (on-chain `contract_source_metadata`) | Same source now | wasm sha256 = deployed code |
+| --- | --- | --- | --- |
+| `recurra-vault.near` (mainnet) | `ad9de6e` | `37e410d` | `f886bee2…` |
+| `vault-v2.recurra-farzad.testnet` | `4d60119` | `2074fca` | `1ff5dc13…` |
+
+Each new commit differs from its old one only by that file and two lines in `docs/PLAN.md`; the `contracts/` git tree is identical in both pairs (`936f9f68…` for mainnet, `56269ab0…` for testnet). However, `cargo near build reproducible-wasm` compiles the commit link (`…/tree/<commit>`) into the wasm. Rebuilding `37e410d` or `2074fca` therefore gives a **different** hash, and the old commits that the on-chain metadata links to are not in this public history. You can still check the deployed hash against the published one (above), and that the published source matches, but not rebuild the exact deployed wasm from this repo. Restoring that needs a new reproducible build and a redeploy of the vaults.
 
 Manual lifecycle on `vault-v2` (plan: 1 mUSDC / 60 s; customer prepaid 3 mUSDC):
 
@@ -416,6 +424,7 @@ near contract call-function as-read-only vault-v2.recurra-farzad.testnet get_sub
 
 ## Limitations
 
+- **Deployed wasm can't be rebuilt from this history.** The repo history was rewritten after the vaults were deployed ([details](#history-rewrite-and-reproducible-builds)).
 - **Not audited.** Hackathon code. The mainnet vault `recurra-vault.near` still has a full-access key, so its owner can upgrade the code; see Future work.
 - **1Click trust window (checkout).** Between the customer's deposit and the delivery to the merchant, the funds are with NEAR Intents / 1Click. The plugin marks an order paid only after 1Click reports `SUCCESS` and the reported recipient, asset and amount match the quote. It trusts the 1Click status API for that and doesn't trace the delivery on-chain itself. Refunds of failed or partial deposits are made by 1Click, not by the store.
 - **Prepaid subscriptions.** NEP-141 tokens have no allowance, so the customer prepays N periods into the vault and tops up later. When the balance runs out, the subscription becomes `PastDue` (see the mainnet run above) until a top-up; nothing is pulled from the wallet.
