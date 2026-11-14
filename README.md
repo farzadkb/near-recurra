@@ -5,10 +5,14 @@
 - **Subscriptions.** With one signature the customer prepays N periods into the Recurra Vault contract. The contract can pay only the plan's merchant, at most the plan amount once per period. Anyone may trigger a due charge, but nobody can change the terms. The customer cancels at any time and gets the rest back. The WooCommerce plugin turns every on-chain charge into a renewal order.
 - **Fund from any chain.** Checkout runs through NEAR Intents (1Click): the customer pays USDC and more on Arbitrum, Base, Ethereum, Solana and others, and the merchant receives native USDC on NEAR.
 
+[![Recurra demo video (~8 min): mainnet checkout from Base, then a subscription charged by the contract](https://img.youtube.com/vi/EGabIc5jHHE/hqdefault.jpg)](https://youtu.be/EGabIc5jHHE)
+
+*▶ Click the image to watch the full demo on YouTube (~8 min).*
+
 | | |
 | --- | --- |
 | **Hosted demo** | https://recurra.enoor.pp.ua · judge login `customer` / `recurra-judge-2026` ([details](#hosted-demo)) |
-| **Demo video** (full, ~8 min) | `<YOUTUBE_URL>` |
+| **Demo video** (full, ~8 min) | https://youtu.be/EGabIc5jHHE |
 | **Demo post on X** | `<X_POST_URL>` |
 | **Mainnet proof** | [checkout + subscription transactions](#live-proof-on-mainnet) |
 
