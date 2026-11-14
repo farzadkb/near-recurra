@@ -13,7 +13,7 @@
 | --- | --- |
 | **Hosted demo** | https://recurra.enoor.pp.ua · judge login `customer` / `recurra-judge-2026` ([details](#hosted-demo)) |
 | **Demo video** (full, ~8 min) | https://youtu.be/EGabIc5jHHE |
-| **Demo post on X** | `<X_POST_URL>` |
+| **Demo post on X** | https://x.com/NFazola/status/2121590265936851099 |
 | **Mainnet proof** | [checkout + subscription transactions](#live-proof-on-mainnet) |
 
 Built from scratch for the NEAR Hackathon (Nov 2026) during the hackathon window: the first commit is from 2026-11-11, and the repo contains no earlier code of ours (third-party libraries are listed in the lockfiles). The plan is in [docs/PLAN.md](docs/PLAN.md).
