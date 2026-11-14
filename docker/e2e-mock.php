@@ -10,7 +10,7 @@
  * Expected: order status goes pending → on-hold → processing in ~30 s.
  *
  * Env: E2E_BASE (site URL incl. path, default http://wordpress), E2E_HOST (Host
- * header, default localhost:8080), E2E_SKU or E2E_PRODUCT_ID, E2E_WP (wp-cli
+ * header, default: host of WP_URL, i.e. localhost:$RECURRA_PORT), E2E_SKU or E2E_PRODUCT_ID, E2E_WP (wp-cli
  * command, default "wp"), E2E_SCENARIO, E2E_POLL, E2E_COOKIE (optional Cookie
  * header, e.g. to test a store in "coming soon" mode as a logged-in user).
  *
@@ -20,7 +20,8 @@
 // phpcs:disable WordPress.WP.AlternativeFunctions,WordPress.Security.EscapeOutput,WordPress.WP.GlobalVariablesOverride,WordPress.PHP.DevelopmentFunctions,WordPress.PHP.DiscouragedPHPFunctions -- CLI test script; shells out to wp-cli.
 
 $base   = getenv( 'E2E_BASE' ) ? getenv( 'E2E_BASE' ) : 'http://wordpress';
-$host   = getenv( 'E2E_HOST' ) ? getenv( 'E2E_HOST' ) : 'localhost:8080';
+$wp_url = parse_url( (string) getenv( 'WP_URL' ) ); // Set by the wpcli service; follows RECURRA_PORT.
+$host   = getenv( 'E2E_HOST' ) ? getenv( 'E2E_HOST' ) : ( empty( $wp_url['host'] ) ? 'localhost:8080' : $wp_url['host'] . ( empty( $wp_url['port'] ) ? '' : ':' . $wp_url['port'] ) );
 $sku    = getenv( 'E2E_SKU' ) ? getenv( 'E2E_SKU' ) : 'coffee-beans';
 $pid    = (int) getenv( 'E2E_PRODUCT_ID' );
 $wp     = getenv( 'E2E_WP' ) ? getenv( 'E2E_WP' ) : 'wp';

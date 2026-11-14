@@ -121,7 +121,7 @@ docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml logs -f wpcli   # wait for: [recurra] ready: http://localhost:8080
 ```
 
-→ about 1 minute on first run (downloads WooCommerce 11.2.2). Then, in a browser:
+→ about 1 minute on first run (downloads WooCommerce 11.2.2). Port 8080 taken? Start with `RECURRA_PORT=8081 docker compose -f docker/docker-compose.yml up -d` and use that port below (the E2E commands follow it). Then, in a browser:
 
 1. Open http://localhost:8080/shop → add **Coffee beans** ($3) → Checkout. Fill any address, pick **Pay with crypto (any chain)** → Place order.
 2. The pay page shows a **MOCK MODE** banner. Pick **USDC — Arbitrum**, enter any EVM refund address (e.g. `0xabababababababababababababababababababab`) → **Get payment address**.
@@ -226,13 +226,16 @@ near contract call-function as-read-only vault-v2.recurra-farzad.testnet get_pla
 near contract call-function as-read-only musdc.recurra-farzad.testnet ft_balance_of json-args '{"account_id":"<you>.testnet"}' network-config testnet now
 ```
 
-### Automated testnet run (maintainers)
+### Automated testnet run
 
-Needs the near CLI keychain of the testnet customer (`customer.recurra-farzad.testnet`); ~3 min because plan 1 has a 60 s period. Charge #2 runs the charger (`E2E_CHARGER_ENV` selects its env file, e.g. one for any judge account), charge #3 uses the near CLI one-liner signed by `E2E_CLI_CHARGER` (default: the customer).
+The whole flow without a browser, with **your** testnet account from step 1 (it needs ≥ 5 mUSDC from the faucet, step 2, and the charger env from step 4, saved as `charger/.env`). It takes ~3 min because it uses plan 1, which has a 60 s period. Charge #2 runs the charger, charge #3 uses the near CLI one-liner, and the customer then cancels.
 
 ```sh
-php docker/e2e-subscription.php
+cd charger && npm ci && cd ..
+E2E_CUSTOMER=<you>.testnet php docker/e2e-subscription.php
 ```
+
+Other env vars: `E2E_CHARGER_ENV` (charger env file, default `charger/.env`), `E2E_CLI_CHARGER` (account that signs charge #3, default: the customer), `E2E_BASE` (store URL, default `http://localhost:8080`). Without `E2E_CUSTOMER` it signs as the maintainers' `customer.recurra-farzad.testnet`.
 
 → `E2E OK (testnet subscription): order #N paid → 2 renewal orders → cancelled → refund 2000000 in ~180s`, followed by the subscribe / charge / cancel tx links. A recorded run (2026-11-11, subscription #3, prepaid 5 × 1 mUSDC):
 
@@ -342,7 +345,7 @@ cd contracts/vault   && cargo near build non-reproducible-wasm && cd ../..
 cd contracts/mock-ft && cargo near build non-reproducible-wasm && cd ../..
 ```
 
-→ you see `✓ Contract successfully built!` and the wasm at `contracts/vault/target/near/recurra_vault.wasm` (~226 KB) and `contracts/mock-ft/target/near/mock_ft.wasm` (test token only).
+→ you see `✓ Contract successfully built!` and the wasm at `contracts/vault/target/near/recurra_vault.wasm` (~228 KB) and `contracts/mock-ft/target/near/mock_ft.wasm` (test token only).
 
 ## Run contract tests
 
